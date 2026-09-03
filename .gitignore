@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.claude/
 
 # Runtime data (never ship real data/secrets)
 .env

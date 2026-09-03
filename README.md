@@ -2,9 +2,7 @@
 
 Einfache Software für simples Radio übers Internet.
 
-Lagerradio-Software für das Regiolager 27: läuft auf einem Raspberry Pi,
-streamt lokal per WLAN und öffentlich per Cloudflare Tunnel, wird über eine
-Web-Admin-UI bedient. Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.md).
+Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.md).
 
 ## Schnellstart (lokale Entwicklung, ohne echte Audio-Hardware)
 
@@ -24,7 +22,7 @@ Server erreichbar ist, und fällt sonst selbst auf den Dummy-Modus zurück
 (simulierte Busse/Pegel, kein echter Stream) - praktisch für Entwicklung
 und Demos.
 
-## Deployment auf dem Pi
+## Deployment
 
 Siehe [`deploy/install.sh`](deploy/install.sh) sowie
 [`deploy/systemd/buschfunk.service`](deploy/systemd/buschfunk.service),

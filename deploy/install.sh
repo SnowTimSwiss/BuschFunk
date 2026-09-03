@@ -3,8 +3,9 @@
 # PipeWire+WirePlumber als Audio-System vorausgesetzt). Nicht destruktiv -
 # kann mehrfach laufen (überschreibt keine vorhandene .env). Installiert
 # fehlende Pakete automatisch, richtet Icecast mit einem generierten
-# Passwort ein und startet den Dienst - danach nur noch die Admin-UI öffnen
-# und den ausgegebenen Setup-Code eintippen.
+# Passwort ein, fragt optional den Cloudflare Tunnel ab und startet den
+# Dienst - danach nur noch die Admin-UI öffnen und den ausgegebenen
+# Setup-Code eintippen.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,8 +32,6 @@ if [ ${#NEEDED_PKGS[@]} -gt 0 ]; then
     echo "WARNUNG: apt-get nicht gefunden - bitte manuell installieren: ${NEEDED_PKGS[*]}"
   fi
 fi
-
-command -v cloudflared >/dev/null || echo "HINWEIS: cloudflared nicht gefunden, siehe https://github.com/cloudflare/cloudflared - nur für externen Zugriff nötig, optional"
 
 # 2. Python-venv + Abhängigkeiten -------------------------------------------
 if [ ! -d .venv ]; then
@@ -84,7 +83,92 @@ systemctl --user daemon-reload
 systemctl --user enable --now buschfunk.service
 systemctl --user restart buschfunk.service
 
-# 6. Admin-URL + Setup-Code direkt anzeigen --------------------------------
+# 6. Cloudflare Tunnel (optional, externer Zugriff über eigene Domain) -----
+EXTERNAL_URL=""
+
+setup_cloudflare_tunnel() {
+  echo ""
+  echo "== Cloudflare Tunnel einrichten =="
+
+  if ! command -v cloudflared >/dev/null; then
+    echo "-- lade cloudflared herunter --"
+    local arch cf_arch
+    arch=$(dpkg --print-architecture 2>/dev/null || uname -m)
+    case "$arch" in
+      arm64|aarch64) cf_arch=arm64 ;;
+      armhf|armv7l|armv6l) cf_arch=arm ;;
+      amd64|x86_64) cf_arch=amd64 ;;
+      *) cf_arch="" ;;
+    esac
+    if [ -z "$cf_arch" ]; then
+      echo "WARNUNG: Architektur '$arch' nicht erkannt - cloudflared bitte manuell installieren (https://github.com/cloudflare/cloudflared/releases)"
+      return 1
+    fi
+    sudo curl -fsSL -o /usr/local/bin/cloudflared \
+      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cf_arch" \
+      || { echo "WARNUNG: Download von cloudflared fehlgeschlagen"; return 1; }
+    sudo chmod +x /usr/local/bin/cloudflared
+  fi
+
+  if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
+    echo ""
+    echo "-- Cloudflare-Login nötig: den jetzt angezeigten Link auf einem Gerät mit Browser öffnen und die Domain auswählen --"
+    cloudflared tunnel login || { echo "WARNUNG: Login fehlgeschlagen oder abgebrochen"; return 1; }
+    [ -f "$HOME/.cloudflared/cert.pem" ] || { echo "WARNUNG: Login nicht abgeschlossen"; return 1; }
+  fi
+
+  local tunnel_name tunnel_domain
+  read -rp "Name für den Tunnel [buschfunk]: " tunnel_name
+  tunnel_name="${tunnel_name:-buschfunk}"
+  read -rp "Domain, unter der BuschFunk erreichbar sein soll (z.B. buschfunk.deine-domain.tld): " tunnel_domain
+  if [ -z "$tunnel_domain" ]; then
+    echo "-- keine Domain angegeben, Tunnel-Einrichtung übersprungen --"
+    return 1
+  fi
+
+  if ! cloudflared tunnel list 2>/dev/null | awk '{print $2}' | grep -qx "$tunnel_name"; then
+    cloudflared tunnel create "$tunnel_name" \
+      || { echo "WARNUNG: Tunnel konnte nicht angelegt werden"; return 1; }
+  fi
+
+  cloudflared tunnel route dns "$tunnel_name" "$tunnel_domain" \
+    || { echo "WARNUNG: DNS-Route konnte nicht angelegt werden (Domain evtl. nicht in diesem Cloudflare-Account)"; return 1; }
+
+  local tunnel_id cred_file
+  tunnel_id=$(cloudflared tunnel list 2>/dev/null | awk -v n="$tunnel_name" '$2==n{print $1}')
+  cred_file="$HOME/.cloudflared/$tunnel_id.json"
+  [ -f "$cred_file" ] || { echo "WARNUNG: Credentials-Datei ($cred_file) nicht gefunden"; return 1; }
+
+  sudo mkdir -p /etc/cloudflared
+  sudo cp "$HOME/.cloudflared/cert.pem" /etc/cloudflared/cert.pem
+  sudo cp "$cred_file" "/etc/cloudflared/$tunnel_id.json"
+  sed \
+    -e "s#^tunnel: .*#tunnel: $tunnel_name#" \
+    -e "s#^credentials-file: .*#credentials-file: /etc/cloudflared/$tunnel_id.json#" \
+    -e "s#hostname: buschfunk.deine-domain.tld#hostname: $tunnel_domain#" \
+    deploy/cloudflared/config.yml.example | sudo tee /etc/cloudflared/config.yml > /dev/null
+
+  sudo cloudflared service install || echo "HINWEIS: 'cloudflared service install' evtl. schon vorher eingerichtet - ignoriere"
+  sudo systemctl enable --now cloudflared \
+    || { echo "WARNUNG: cloudflared-Dienst konnte nicht gestartet werden"; return 1; }
+
+  EXTERNAL_URL="https://$tunnel_domain"
+  echo "-- Cloudflare Tunnel eingerichtet: $EXTERNAL_URL --"
+}
+
+if [ -t 0 ]; then
+  read -rp "Cloudflare Tunnel für externen Zugriff einrichten (eigene Domain im Cloudflare-Account nötig)? [y/N] " SETUP_TUNNEL
+  case "$SETUP_TUNNEL" in
+    [JjYy]*)
+      setup_cloudflare_tunnel || echo "-- Cloudflare Tunnel übersprungen/fehlgeschlagen, kann später manuell eingerichtet werden (siehe deploy/cloudflared/config.yml.example) --"
+      ;;
+    *) ;;
+  esac
+else
+  echo "HINWEIS: kein interaktives Terminal erkannt - Cloudflare-Tunnel-Einrichtung übersprungen (später manuell möglich, siehe deploy/cloudflared/config.yml.example)"
+fi
+
+# 7. Admin-URL + Setup-Code direkt anzeigen --------------------------------
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP" ] && IP="<pi-ip>"
 
@@ -102,8 +186,12 @@ echo ""
 echo "======================================================"
 echo " Fertig! BuschFunk läuft."
 echo ""
-echo " Admin-UI öffnen:   http://$IP:8000/admin/"
-echo " Hörer-Ansicht:      http://$IP:8000/listen/"
+echo " Admin-UI (lokal):   http://$IP:8000/admin/"
+echo " Hörer-Ansicht:       http://$IP:8000/listen/"
+if [ -n "$EXTERNAL_URL" ]; then
+  echo " Admin-UI (extern):  $EXTERNAL_URL/admin/"
+  echo " Hörer-Ansicht (extern): $EXTERNAL_URL/listen/"
+fi
 if [ -n "$CODE" ]; then
   echo ""
   echo " Einmaliger Setup-Code fürs erste Login: $CODE"
@@ -113,6 +201,9 @@ else
   echo "   journalctl --user -u buschfunk.service -f"
 fi
 echo "======================================================"
-echo ""
-echo "Optional, nur für externen Zugriff über eine eigene Domain:"
-echo "  cloudflared einrichten, siehe deploy/cloudflared/config.yml.example"
+if [ -z "$EXTERNAL_URL" ]; then
+  echo ""
+  echo "Für externen Zugriff über eine eigene Domain kann dieses Skript erneut"
+  echo "gestartet werden (fragt dann wieder nach dem Cloudflare Tunnel), oder"
+  echo "manuell: siehe deploy/cloudflared/config.yml.example"
+fi

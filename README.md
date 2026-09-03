@@ -39,9 +39,13 @@ Das Skript ist nicht-interaktiv und macht alles automatisch:
 - legt die Python-Umgebung an und installiert die App
 - erzeugt eine `.env` mit zufälligem Session-Secret und Icecast-Passwort
 - richtet Icecast passend dazu ein und startet es
+- fragt interaktiv, ob ein Cloudflare Tunnel für externen Zugriff über eine
+  eigene Domain eingerichtet werden soll, und führt bei Bedarf komplett
+  durch (Login, Tunnel anlegen, DNS-Route, systemd-Dienst) - kann bei "Nein"
+  jederzeit übersprungen und später durch erneutes Ausführen nachgeholt werden
 - richtet BuschFunk als systemd-Dienst ein (startet automatisch bei jedem
   Neustart des Pi, auch nach Stromausfall)
-- gibt am Ende direkt die Admin-URL und den einmaligen Setup-Code aus
+- gibt am Ende direkt die Admin-URL(s) und den einmaligen Setup-Code aus
 
 Am Ende steht z.B.:
 
@@ -54,9 +58,10 @@ Diese URL im Browser öffnen, Setup-Code eingeben, Admin-Passwort setzen -
 fertig. Das Skript kann gefahrlos mehrfach laufen (z.B. nach einem Update),
 bestehende `.env`/Passwörter werden nicht überschrieben.
 
-Nur für externen Zugriff über eine eigene Domain zusätzlich nötig (optional):
-[`deploy/cloudflared/config.yml.example`](deploy/cloudflared/config.yml.example)
-einmalig einrichten (Anleitung steht in der Datei).
+Voraussetzung für den Cloudflare Tunnel: eine Domain, die im eigenen
+Cloudflare-Account verwaltet wird. Ohne das läuft BuschFunk trotzdem -
+dann nur lokal im Lager-WLAN erreichbar. Details/manuelles Setup:
+[`deploy/cloudflared/config.yml.example`](deploy/cloudflared/config.yml.example).
 
 Für die echte PipeWire/Mischpult-Verkabelung: [`docs/audio-setup.md`](docs/audio-setup.md)
 (auf echter Hardware noch zu verifizieren, siehe Spec Abschnitt 10).

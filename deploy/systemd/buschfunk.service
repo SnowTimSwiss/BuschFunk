@@ -1,0 +1,28 @@
+[Unit]
+Description=BuschFunk Lagerradio (Admin/Listener-Backend + Stream-Steuerung)
+After=network-online.target pipewire.service wireplumber.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Pfad anpassen, falls das Repo woanders liegt:
+WorkingDirectory=%h/BuschFunk/backend
+ExecStart=%h/BuschFunk/.venv/bin/python %h/BuschFunk/backend/run.py
+Restart=on-failure
+RestartSec=3
+Environment=PORT=8000
+
+# Der Self-Update-Button in der Admin-UI startet den Prozess selbst neu
+# (os.execv) - hier braucht es also keine speziellen systemd-Restart-Rechte.
+
+[Install]
+WantedBy=default.target
+
+# WICHTIG: das ist ein User-Unit (systemctl --user), kein System-Service -
+# PipeWire läuft pro Benutzer-Session, ein System-Service (root) hätte keinen
+# Zugriff darauf. Installation siehe deploy/install.sh:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/buschfunk.service ~/.config/systemd/user/
+#   loginctl enable-linger $USER   # damit der Service auch ohne Login startet
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now buschfunk.service

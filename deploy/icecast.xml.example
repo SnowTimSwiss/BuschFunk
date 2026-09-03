@@ -1,0 +1,75 @@
+<!--
+  Icecast2-Vorlage für BuschFunk. Nach /etc/icecast2/icecast.xml kopieren
+  und die CHANGE-ME-Platzhalter ersetzen (müssen mit ICECAST_SOURCE_PASSWORD
+  etc. aus der .env übereinstimmen). Icecast läuft als eigener systemd-
+  Systemdienst (Standard-Paket), unabhängig von BuschFunk selbst.
+
+  Mount /stream: der eine Dauerstream, den ffmpeg (audio/stream.py) beliefert.
+  Mount /stream_fallback: manuell mit einer Playlist-Datei befüllen (z.B. via
+  einem zweiten, dauerhaft laufenden ffmpeg/ices2-Prozess) - übernimmt nur,
+  wenn der Haupt-Quellclient (ffmpeg) komplett die Verbindung verliert
+  (Absturz), nicht bei normalem Mute/Unmute der Busse.
+-->
+<icecast>
+    <location>Regiolager 27</location>
+    <admin>admin@localhost</admin>
+
+    <limits>
+        <clients>60</clients>
+        <sources>2</sources>
+        <queue-size>524288</queue-size>
+        <client-timeout>30</client-timeout>
+        <header-timeout>15</header-timeout>
+        <source-timeout>10</source-timeout>
+        <burst-on-connect>1</burst-on-connect>
+        <burst-size>65536</burst-size>
+    </limits>
+
+    <authentication>
+        <source-password>CHANGE-ME-icecast-source-password</source-password>
+        <relay-password>CHANGE-ME-icecast-relay-password</relay-password>
+        <admin-user>admin</admin-user>
+        <admin-password>CHANGE-ME-icecast-admin-password</admin-password>
+    </authentication>
+
+    <hostname>localhost</hostname>
+
+    <listen-socket>
+        <!-- 8001, NICHT 8000 - das belegt bereits BuschFunk selbst (backend/run.py) -->
+        <port>8001</port>
+        <bind-address>127.0.0.1</bind-address>
+        <!-- 127.0.0.1: nur lokal erreichbar, cloudflared/der Outdoor-AP-Reverse-Proxy
+             übernimmt das Aussenexponieren. Für direkten LAN-Zugriff auf 0.0.0.0 ändern. -->
+    </listen-socket>
+
+    <mount type="normal">
+        <mount-name>/stream</mount-name>
+        <fallback-mount>/stream_fallback</fallback-mount>
+        <fallback-override>1</fallback-override>
+        <public>0</public>
+    </mount>
+
+    <mount type="normal">
+        <mount-name>/stream_fallback</mount-name>
+        <public>0</public>
+    </mount>
+
+    <fileserve>0</fileserve>
+
+    <paths>
+        <logdir>/var/log/icecast2</logdir>
+        <webroot>/usr/share/icecast2/web</webroot>
+        <adminroot>/usr/share/icecast2/admin</adminroot>
+    </paths>
+
+    <logging>
+        <accesslog>access.log</accesslog>
+        <errorlog>error.log</errorlog>
+        <loglevel>3</loglevel>
+        <logsize>10000</logsize>
+    </logging>
+
+    <security>
+        <chroot>0</chroot>
+    </security>
+</icecast>

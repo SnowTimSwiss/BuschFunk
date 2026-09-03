@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime data (never ship real data/secrets)
+.env
+backend/buschfunk.db
+backend/buschfunk.db-journal
+media/*
+!media/.gitkeep
+
+# OS / editor
+.DS_Store
+*.swp
+
+# logs
+*.log

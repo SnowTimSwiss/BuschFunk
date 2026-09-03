@@ -1,0 +1,25 @@
+# cloudflared-Konfiguration für den Named Tunnel von BuschFunk.
+# Nach ~/.cloudflared/config.yml kopieren (oder Pfad via --config angeben).
+#
+# Einrichtung (einmalig):
+#   cloudflared tunnel login
+#   cloudflared tunnel create buschfunk
+#   # DNS-Eintrag für die feste Subdomain auf den Tunnel zeigen lassen:
+#   cloudflared tunnel route dns buschfunk buschfunk.deine-domain.tld
+#   # Token/Credentials-Pfad unten eintragen, dann als systemd-Sidecar laufen lassen:
+#   sudo cloudflared service install
+#
+# Alles - Listener-UI, Admin-UI, REST-API/WebSocket UND der Audio-Stream -
+# läuft über denselben Tunnel auf derselben Subdomain und denselben lokalen
+# Port 8000: BuschFunk selbst reverse-proxied /stream intern an Icecast
+# (Port 8001, nur auf 127.0.0.1) - kein zweiter öffentlicher Port/Ingress-
+# Eintrag nötig.
+
+tunnel: buschfunk
+credentials-file: /home/pi/.cloudflared/buschfunk.json
+
+ingress:
+  - hostname: buschfunk.deine-domain.tld
+    service: http://localhost:8000
+
+  - service: http_status:404

@@ -74,6 +74,7 @@ class BusOut(BaseModel):
     id: int
     device_id: str
     display_name: str
+    direction: str = "in"
     is_muted: bool
     level: float = 0.0
     connected: bool = True

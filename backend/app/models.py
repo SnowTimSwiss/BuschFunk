@@ -63,6 +63,7 @@ class Bus(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[str] = mapped_column(unique=True)
     display_name: Mapped[str] = mapped_column(default="Neuer Bus")
+    direction: Mapped[str] = mapped_column(default="in")  # in (Eingang) | out (Ausgang, z.B. Monitor)
     is_muted: Mapped[bool] = mapped_column(default=True)
     last_seen_active: Mapped[datetime | None] = mapped_column(nullable=True)
 

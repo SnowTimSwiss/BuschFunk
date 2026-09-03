@@ -42,7 +42,12 @@ async def _discover_buses_loop() -> None:
                     existing = {b.device_id for b in db.query(Bus).all()}
                     for bus in discovered:
                         if bus.device_id not in existing:
-                            db.add(Bus(device_id=bus.device_id, display_name=bus.display_name, is_muted=True))
+                            db.add(Bus(
+                                device_id=bus.device_id,
+                                display_name=bus.display_name,
+                                direction=bus.direction,
+                                is_muted=True,
+                            ))
                     db.commit()
                 finally:
                     db.close()

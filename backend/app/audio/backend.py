@@ -6,6 +6,7 @@ from dataclasses import dataclass
 class DiscoveredBus:
     device_id: str
     display_name: str
+    direction: str = "in"  # in (Eingang) | out (Ausgang, z.B. Monitor-Lautsprecher)
     connected: bool = True
 
 
@@ -13,8 +14,11 @@ class AudioBackend(ABC):
     """Abstraktion über die tatsächliche Audio-Infrastruktur (PipeWire) bzw.
     ein Dummy für Entwicklung/Demo ohne echte Hardware.
 
-    Ein Bus = eine Audioquelle, die dauerhaft in den einen gemeinsamen
-    Loopback-Mix einspeist. Mute/Unmute passiert hier, nie am ffmpeg-Stream.
+    Ein Bus ist entweder ein Eingang (direction="in": eine Audioquelle, die
+    dauerhaft in den einen gemeinsamen Loopback-Mix einspeist) oder ein
+    Ausgang (direction="out": ein Gerät, das den fertigen Mix abbekommt,
+    z.B. Monitor-Lautsprecher). Mute/Unmute passiert immer am jeweiligen
+    Gerät selbst, nie am ffmpeg-Stream.
     """
 
     @abstractmethod

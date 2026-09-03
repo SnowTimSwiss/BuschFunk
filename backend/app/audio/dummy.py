@@ -3,8 +3,10 @@ import random
 from .backend import AudioBackend, DiscoveredBus
 
 FAKE_BUSES = [
-    DiscoveredBus(device_id="dummy:mixer", display_name="Mischpult / Mikrofone"),
-    DiscoveredBus(device_id="dummy:laptop", display_name="Laptop / Spotify"),
+    DiscoveredBus(device_id="dummy:mixer", display_name="Mischpult / Mikrofone", direction="in"),
+    DiscoveredBus(device_id="dummy:laptop", display_name="Laptop / Spotify", direction="in"),
+    DiscoveredBus(device_id="dummy:monitor", display_name="Monitor-Lautsprecher", direction="out"),
+    DiscoveredBus(device_id="dummy:kopfhoerer", display_name="Kopfhörer Technik", direction="out"),
 ]
 
 

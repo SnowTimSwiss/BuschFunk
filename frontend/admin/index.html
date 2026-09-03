@@ -237,6 +237,7 @@
     <button class="em-btn" id="unterbruchBtn"><span class="dot"></span>Unterbruch</button>
   </div>
   <div class="clock" id="clock">--:--:--</div>
+  <button class="theme-toggle" id="settingsBtn">⚙ Einstellungen</button>
   <button class="theme-toggle" id="themeToggle">hell/dunkel</button>
   <button class="logout-btn" id="logoutBtn">Abmelden</button>
 </div>
@@ -247,16 +248,6 @@
     <div class="section-label">Lagertage</div>
     <div id="dayList"></div>
     <button class="add-day" id="addDayBtn">+ Tag hinzufügen</button>
-    <div class="sidebar-tools">
-      <div class="section-label">Daten</div>
-      <button class="tool-btn" id="exportBtn"><span class="ic">⬇</span> Tagesplan exportieren</button>
-      <button class="tool-btn" id="importBtn"><span class="ic">⬆</span> Tagesplan importieren</button>
-    </div>
-    <div class="sidebar-tools">
-      <div class="section-label">Software</div>
-      <div class="version-line" id="versionLine">Version: –</div>
-      <button class="tool-btn" id="checkUpdateBtn"><span class="ic">↻</span> Nach Updates suchen</button>
-    </div>
   </div>
 
   <div class="col">
@@ -293,7 +284,7 @@
     <div class="section-label">Live-Steuerung</div>
 
     <div class="now-playing" id="nowPlaying">
-      <div class="live-badge"><span class="b-dot"></span>LIVE</div>
+      <div class="live-badge" id="liveBadge" hidden><span class="b-dot"></span>LIVE</div>
       <div class="np-label">AKTUELLES SEGMENT</div>
       <div class="np-title" id="npTitle">–</div>
       <div class="np-sub" id="npSub"></div>
@@ -336,7 +327,7 @@
     </div>
 
     <div class="bus-block">
-      <div class="section-label">Audio-Busse</div>
+      <div class="section-label">Eingänge (schnell stumm schalten)</div>
       <div id="busList"></div>
     </div>
 
@@ -413,6 +404,30 @@
       <div class="modal-error" id="importError"></div>
     </div>
     <div class="modal-actions"><button data-close="importOverlay">Abbrechen</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="settingsOverlay">
+  <div class="modal" style="width:min(620px, 92vw)">
+    <div class="modal-head">Einstellungen<button data-close="settingsOverlay">×</button></div>
+    <div class="modal-body">
+      <label>Software</label>
+      <div class="version-line" id="versionLine">Version: –</div>
+      <button class="tool-btn" id="checkUpdateBtn" style="margin-top:8px"><span class="ic">↻</span> Nach Updates suchen</button>
+
+      <label>Daten</label>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="tool-btn" id="exportBtn"><span class="ic">⬇</span> Tagesplan exportieren</button>
+        <button class="tool-btn" id="importBtn"><span class="ic">⬆</span> Tagesplan importieren</button>
+      </div>
+
+      <label>Audio-Eingänge</label>
+      <div id="busListIn"></div>
+
+      <label>Audio-Ausgänge (Monitor, Kopfhörer, …)</label>
+      <div id="busListOut"></div>
+    </div>
+    <div class="modal-actions"><button data-close="settingsOverlay">Schliessen</button></div>
   </div>
 </div>
 
@@ -795,6 +810,7 @@
     liveToggle.textContent = liveState.is_on_air ? 'ON AIR' : 'OFF AIR';
     liveToggle.classList.toggle('off', !liveState.is_on_air);
     nowPlaying.classList.toggle('off-air', !liveState.is_on_air);
+    document.getElementById('liveBadge').hidden = !liveState.is_on_air;
 
     const npTitle = document.getElementById('npTitle');
     const npSub = document.getElementById('npSub');
@@ -897,15 +913,14 @@
   }
 
   // ---------- buses ----------
-  function renderBuses() {
-    const list = document.getElementById('busList');
-    if (!liveState) return;
+  function renderBusList(containerId, buses, emptyText) {
+    const list = document.getElementById(containerId);
     list.innerHTML = '';
-    if (!liveState.buses.length) {
-      list.innerHTML = '<div class="bus-empty">Noch keine Audio-Busse erkannt.</div>';
+    if (!buses.length) {
+      list.innerHTML = `<div class="bus-empty">${emptyText}</div>`;
       return;
     }
-    liveState.buses.forEach((bus) => {
+    buses.forEach((bus) => {
       const row = document.createElement('div');
       row.className = 'bus-row';
       row.innerHTML = `
@@ -931,6 +946,15 @@
       });
       list.appendChild(row);
     });
+  }
+
+  function renderBuses() {
+    if (!liveState) return;
+    const inputs = liveState.buses.filter((b) => b.direction !== 'out');
+    const outputs = liveState.buses.filter((b) => b.direction === 'out');
+    renderBusList('busList', inputs, 'Noch keine Audio-Eingänge erkannt.');
+    renderBusList('busListIn', inputs, 'Noch keine Audio-Eingänge erkannt.');
+    renderBusList('busListOut', outputs, 'Noch keine Audio-Ausgänge erkannt.');
   }
 
   // ---------- schedule ----------
@@ -1137,6 +1161,11 @@
   // ---------- modal close buttons ----------
   document.querySelectorAll('[data-close]').forEach((btn) => {
     btn.addEventListener('click', () => document.getElementById(btn.dataset.close).classList.remove('show'));
+  });
+
+  // ---------- settings ----------
+  document.getElementById('settingsBtn').addEventListener('click', () => {
+    document.getElementById('settingsOverlay').classList.add('show');
   });
 
   // ---------- theme + clock ----------

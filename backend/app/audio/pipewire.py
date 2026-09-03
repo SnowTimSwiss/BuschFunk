@@ -3,9 +3,12 @@
 Routing-Idee: ein Null-Sink `buschfunk-mix` ist das gemeinsame Ziel. Jede
 Hardware-Quelle (Mischpult, weitere USB-Interfaces) wird per `pw-link` in
 dessen Input-Ports gemischt (mehrere Links auf denselben Input-Port werden
-von PipeWire automatisch summiert). Mute/Unmute passiert über `wpctl
-set-mute` auf der Quelle - der Link bleibt bestehen, es wird nichts neu
-verbunden. Der interne "Player"-Bus (Jingles/Intros/Outros) spielt Dateien
+von PipeWire automatisch summiert). Umgekehrt wird jedes erkannte
+Wiedergabegerät (Monitor-Lautsprecher, Kopfhörer) per `pw-link` an die
+Monitor-Ports des Mix-Sinks gehängt, bekommt also denselben fertigen Mix wie
+der Icecast-Stream. Mute/Unmute passiert immer über `wpctl set-mute` auf dem
+jeweiligen Gerät - der Link bleibt bestehen, es wird nichts neu verbunden.
+Der interne "Player"-Bus (Jingles/Intros/Outros) spielt Dateien
 per kurzlebigem ffmpeg-Prozess über die generische "pipewire"-ALSA-PCM
 (Ziel-Node per PIPEWIRE_NODE-Umgebungsvariable) direkt in den Mix.
 
@@ -89,27 +92,35 @@ class PipeWireAudioBackend(AudioBackend):
         for node in nodes:
             props = node.get("info", {}).get("props", {})
             media_class = props.get("media.class", "")
-            if media_class != "Audio/Source":
-                continue  # nur Hardware-Aufnahmequellen (Mischpult, USB-Interfaces)
             name = props.get("node.name")
             if not name:
                 continue
-            self._node_ids[name] = str(node.get("id"))
-            display = props.get("node.description") or props.get("device.description") or name
-            buses.append(DiscoveredBus(device_id=name, display_name=display))
-            await self._link_into_mix(name)
+            if media_class == "Audio/Source":
+                # Hardware-Aufnahmequelle (Mischpult, USB-Interface) -> in den Mix
+                self._node_ids[name] = str(node.get("id"))
+                display = props.get("node.description") or props.get("device.description") or name
+                buses.append(DiscoveredBus(device_id=name, display_name=display, direction="in"))
+                await self._link_ports(f"{name}:", MIX_SINK_NAME)
+            elif media_class == "Audio/Sink" and name != MIX_SINK_NAME:
+                # Hardware-Wiedergabegerät (Monitor-Lautsprecher, Kopfhörer) -> bekommt den fertigen Mix
+                self._node_ids[name] = str(node.get("id"))
+                display = props.get("node.description") or props.get("device.description") or name
+                buses.append(DiscoveredBus(device_id=name, display_name=display, direction="out"))
+                await self._link_ports(f"{MIX_SINK_NAME}:monitor", name)
         return buses
 
-    async def _link_into_mix(self, source_node_name: str) -> None:
+    async def _link_ports(self, src_prefix: str, dst_node_name: str) -> None:
+        """Verbindet alle Output-Ports, die mit `src_prefix` beginnen, mit den
+        Input-Ports des Ziel-Node (z.B. `"quelle:"` oder `"mix:monitor"`)."""
         code, out, _err = await _run("pw-link", "-o")
         if code != 0:
             return
-        src_ports = [line.strip() for line in out.splitlines() if line.startswith(f"{source_node_name}:")]
+        src_ports = [line.strip() for line in out.splitlines() if line.startswith(src_prefix)]
 
         code, out, _err = await _run("pw-link", "-i")
         if code != 0:
             return
-        dst_ports = [line.strip() for line in out.splitlines() if line.startswith(f"{MIX_SINK_NAME}:")]
+        dst_ports = [line.strip() for line in out.splitlines() if line.startswith(f"{dst_node_name}:")]
 
         for src, dst in zip(sorted(src_ports), sorted(dst_ports)):
             await _run("pw-link", src, dst)  # Fehler (z.B. "schon verbunden") ignorieren wir bewusst

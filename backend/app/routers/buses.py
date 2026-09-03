@@ -22,6 +22,7 @@ async def list_buses(db: Session = Depends(get_db)):
             "id": b.id,
             "device_id": b.device_id,
             "display_name": b.display_name,
+            "direction": b.direction,
             "is_muted": b.is_muted,
             "level": levels.get(b.device_id, 0.0),
             "connected": b.device_id in runtime.last_seen_device_ids,

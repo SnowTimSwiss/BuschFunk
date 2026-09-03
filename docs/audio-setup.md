@@ -37,6 +37,13 @@ echten Pi mit angeschlossenem Mischpult unbedingt durchgehen.
    in `audio/stream.py`).
 7. **Pegelmessung**: `ffmpeg -f pipewire -i <bus-name> -t 1 -af astats=metadata=1:reset=1 -f null - 2>&1 | grep RMS`
    sollte einen RMS-Wert ausgeben, während Signal anliegt.
+8. **Ausgänge (Monitor/Kopfhörer)**: angeschlossene Wiedergabegeräte (`media.class=Audio/Sink`,
+   ausser `buschfunk-mix` selbst) sollten in der Admin-UI unter Einstellungen ->
+   Audio-Ausgänge auftauchen. `pw-link -l` sollte Links von
+   `buschfunk-mix:monitor_FL/FR` zum jeweiligen Gerät zeigen. Fehlen sie, manuell:
+   `pw-link "buschfunk-mix:monitor_FL" "<gerät>:playback_FL"` (und FR). Mute
+   funktioniert wie bei Eingängen über `wpctl set-mute <node-id> 1` auf dem
+   Ausgabegerät - beeinflusst nicht den Icecast-Stream.
 
 ## Bekannte Stolpersteine
 

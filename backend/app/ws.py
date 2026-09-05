@@ -43,12 +43,15 @@ class ConnectionManager:
         message = json.dumps(payload, default=str)
         async with self._lock:
             targets = list(self._meter_subscribers if meters_only else self._connections)
-        dead: list[WebSocket] = []
-        for ws in targets:
+
+        async def send(ws: WebSocket) -> WebSocket | None:
             try:
-                await ws.send_text(message)
+                await asyncio.wait_for(ws.send_text(message), timeout=1.0)
+                return None
             except Exception:
-                dead.append(ws)
+                return ws
+
+        dead = [ws for ws in await asyncio.gather(*(send(ws) for ws in targets)) if ws is not None]
         if dead:
             async with self._lock:
                 for ws in dead:

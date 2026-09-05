@@ -35,7 +35,7 @@ MIX_SINK_NAME = "buschfunk-mix"
 MIX_MONITOR = f"{MIX_SINK_NAME}.monitor"
 
 LEVEL_INTERVAL = 0.1      # Sekunden zwischen zwei Pegelwerten
-LEVEL_HOLD = 0.6          # ohne neuen Wert nach dieser Zeit auf 0 zurückfallen
+LEVEL_HOLD = 1.5          # Pulse kann beim Hotplug kurz keine Frames liefern
 
 # wpctl kappt eine gewuenschte Lautstaerke standardmaessig bei 100%, egal
 # welcher Zahlenwert uebergeben wird - das "-l" Limit muss mindestens so hoch
@@ -45,7 +45,8 @@ LEVEL_HOLD = 0.6          # ohne neuen Wert nach dieser Zeit auf 0 zurückfallen
 WPCTL_VOLUME_LIMIT = "5.0"
 
 
-async def _run(*args: str, timeout: float = 5.0) -> tuple[int, str, str]:
+async def _run(*args: str, timeout: float = 2.0) -> tuple[int, str, str]:
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -55,9 +56,16 @@ async def _run(*args: str, timeout: float = 5.0) -> tuple[int, str, str]:
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        if proc is not None:
+            proc.kill()
+            await proc.wait()
         return -1, "", "timeout"
+    except asyncio.CancelledError:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            with contextlib.suppress(ProcessLookupError):
+                await proc.wait()
+        raise
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
@@ -117,15 +125,17 @@ class _LevelMonitor:
         ]
 
     async def _loop(self) -> None:
+        retry_delay = 2.0
         while True:
             try:
                 self._proc = await asyncio.create_subprocess_exec(
                     *self._cmd(),
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                     stdin=asyncio.subprocess.DEVNULL,
                 )
                 assert self._proc.stdout is not None
+                had_sample = False
                 async for raw in self._proc.stdout:
                     line = raw.decode(errors="replace").strip()
                     if not line.startswith("lavfi.astats.Overall.RMS_level="):
@@ -137,7 +147,28 @@ class _LevelMonitor:
                         db = LEVEL_FLOOR_DB  # "-inf" bei absoluter Stille
                     self._level = db_to_level(db)
                     self._updated_at = time.monotonic()
-                await self._proc.wait()
+                    had_sample = True
+                proc = self._proc
+                await proc.wait()
+                error = b""
+                if proc.stderr is not None:
+                    error = await proc.stderr.read()
+                self._proc = None
+                if had_sample:
+                    retry_delay = 2.0
+                else:
+                    retry_delay = min(10.0, retry_delay * 2.0)
+                    detail = error.decode(errors="replace").strip().splitlines()
+                    logger.warning(
+                        "Pegelmessung für %s liefert keine Daten%s; neuer Versuch in %.0fs",
+                        self.source,
+                        f" ({detail[-1][:180]})" if detail else "",
+                        retry_delay,
+                    )
+                # Ein abgezogenes Geraet beendet ffmpeg normalerweise sauber.
+                # Ohne Abstand wuerde diese Schleife tausende Prozesse pro
+                # Sekunde starten und damit auch den Webserver ausbremsen.
+                await asyncio.sleep(retry_delay)
             except asyncio.CancelledError:
                 await self._kill_proc()
                 raise
@@ -237,6 +268,8 @@ class _InputCorrection:
                     self._level = db_to_level(db)
                     self._updated_at = time.monotonic()
                 await self._proc.wait()
+                self._proc = None
+                await asyncio.sleep(2.0)
             except asyncio.CancelledError:
                 await self._kill_proc()
                 raise
@@ -252,7 +285,9 @@ class PipeWireAudioBackend(AudioBackend):
         self._master_node_id: str | None = None
         self._linked: set[str] = set()           # bereits verkabelte device_ids
         self._monitors: dict[str, _LevelMonitor] = {}
+        self._missing_scans: dict[str, int] = {}
         self._corrections: dict[str, _InputCorrection] = {}  # device_id -> laufende Kanalkorrektur
+        self._last_buses: list[DiscoveredBus] = []
         self._master = _LevelMonitor(MIX_MONITOR)
 
     # ---------- Lifecycle ----------
@@ -272,6 +307,9 @@ class PipeWireAudioBackend(AudioBackend):
 
     async def _ensure_mix_sink(self) -> None:
         nodes = await self._dump_nodes()
+        if nodes is None:
+            logger.warning("Mix-Sink konnte noch nicht geprüft werden")
+            return
         if any(self._node_name(n) == MIX_SINK_NAME for n in nodes):
             self._remember_master_node(nodes)
             return
@@ -281,7 +319,9 @@ class PipeWireAudioBackend(AudioBackend):
             f"node.name={MIX_SINK_NAME} media.class=Audio/Sink "
             "audio.position=[FL,FR] object.linger=true }",
         )
-        self._remember_master_node(await self._dump_nodes())
+        nodes = await self._dump_nodes()
+        if nodes is not None:
+            self._remember_master_node(nodes)
 
     # ---------- Master-Ausgabe ----------
 
@@ -297,20 +337,26 @@ class PipeWireAudioBackend(AudioBackend):
     def _node_name(node: dict) -> str | None:
         return node.get("info", {}).get("props", {}).get("node.name")
 
-    async def _dump_nodes(self) -> list[dict]:
+    async def _dump_nodes(self) -> list[dict] | None:
         code, out, err = await _run("pw-dump", "--no-colors")
         if code != 0:
             logger.warning("pw-dump fehlgeschlagen: %s", err.strip())
-            return []
+            return None
         try:
             data = json.loads(out)
         except json.JSONDecodeError:
             logger.warning("pw-dump lieferte kein gültiges JSON")
-            return []
+            return None
         return [obj for obj in data if obj.get("type") == "PipeWire:Interface:Node"]
 
     async def discover_buses(self) -> list[DiscoveredBus]:
         nodes = await self._dump_nodes()
+        if nodes is None:
+            # PipeWire kann während USB-Neuverhandlung kurz nicht antworten.
+            # Das ist kein Beweis dafuer, dass alle Geraete weg sind: den
+            # letzten guten Zustand behalten, damit UI, Routing und Meter
+            # nicht bei jedem kurzen Aussetzer kollektiv zurueckgesetzt werden.
+            return list(self._last_buses)
         self._remember_master_node(nodes)
         buses: list[DiscoveredBus] = []
         seen: set[str] = set()
@@ -334,12 +380,30 @@ class PipeWireAudioBackend(AudioBackend):
             buses.append(DiscoveredBus(device_id=name, display_name=display, direction=direction))
 
         await self._sync_links(seen)
-        self._sync_monitors(seen)
+        # Erst nach zwei aufeinanderfolgenden erfolgreichen Scans als weg
+        # behandeln. Beim USB-Hotplug liefert PipeWire fuer kurze Zeit gerne
+        # eine unvollstaendige Node-Liste.
+        active = set(self._monitors) | self._linked
+        stable_seen = set(seen)
+        for device_id in active - seen:
+            self._missing_scans[device_id] = self._missing_scans.get(device_id, 0) + 1
+            if self._missing_scans[device_id] < 2:
+                stable_seen.add(device_id)
+        for device_id in seen:
+            self._missing_scans.pop(device_id, None)
+
+        await self._sync_monitors(stable_seen)
 
         # abgezogene Geräte: beim nächsten Einstecken wieder frisch verkabeln
-        for gone in self._linked - seen:
+        for gone in self._linked - stable_seen:
             self._linked.discard(gone)
-        return buses
+            self._missing_scans.pop(gone, None)
+        stable_buses = {bus.device_id: bus for bus in buses}
+        for bus in self._last_buses:
+            if bus.device_id in stable_seen:
+                stable_buses.setdefault(bus.device_id, bus)
+        self._last_buses = list(stable_buses.values())
+        return list(self._last_buses)
 
     async def _sync_links(self, device_ids: set[str]) -> None:
         """Nur neu aufgetauchte Geräte verkabeln - die Port-Listen holen wir
@@ -393,14 +457,49 @@ class PipeWireAudioBackend(AudioBackend):
             if current_out and current_out.startswith(src_prefix) and target.startswith(dst_prefix):
                 await _run("pw-link", "-d", current_out, target)
 
-    def _sync_monitors(self, device_ids: set[str]) -> None:
+    async def _pulse_source_names(self) -> set[str] | None:
+        """Liefert die Namen, die ffmpeg über pipewire-pulse wirklich öffnen kann.
+
+        PipeWire-Node-Namen und Pulse-Quellnamen sind meistens gleich, aber
+        nicht garantiert (vor allem bei Monitor-Quellen). Ein einmaliger
+        `pactl`-Snapshot pro Discovery reicht, weil neue Monitore nur beim
+        Auftauchen eines Geräts angelegt werden.
+        """
+        code, output, _error = await _run("pactl", "list", "short", "sources", timeout=1.0)
+        if code != 0:
+            return None
+        names: set[str] = set()
+        for line in output.splitlines():
+            fields = line.split()
+            if len(fields) >= 2:
+                names.add(fields[1])
+        return names
+
+    @staticmethod
+    def _pulse_source_for(device_id: str, direction: str, names: set[str] | None) -> str:
+        fallback = device_id if direction == "in" else f"{device_id}.monitor"
+        if not names:
+            return fallback
+        if direction == "in":
+            candidates = [name for name in names if name == device_id or name.startswith(device_id + ".")]
+        else:
+            monitor = f"{device_id}.monitor"
+            candidates = [
+                name for name in names
+                if name == monitor or (name.endswith(".monitor") and name.startswith(device_id + "."))
+            ]
+        return sorted(candidates, key=len)[0] if candidates else fallback
+
+    async def _sync_monitors(self, device_ids: set[str]) -> None:
+        new = [device_id for device_id in device_ids if device_id not in self._monitors]
+        pulse_sources = await self._pulse_source_names() if new else None
         for device_id in device_ids:
             if device_id in self._corrections:
                 continue  # die Kanalkorrektur meldet ihren eigenen Pegel
             if device_id in self._monitors:
                 continue
             # Ein Sink wird über seine ".monitor"-Quelle abgehört, eine Source direkt.
-            source = device_id if self._directions.get(device_id) == "in" else f"{device_id}.monitor"
+            source = self._pulse_source_for(device_id, self._directions.get(device_id, "in"), pulse_sources)
             monitor = _LevelMonitor(source)
             monitor.start()
             self._monitors[device_id] = monitor
@@ -425,7 +524,9 @@ class PipeWireAudioBackend(AudioBackend):
         Einzelgeraet veraendert noch die laufende Musik pausiert.
         """
         if self._master_node_id is None:
-            self._remember_master_node(await self._dump_nodes())
+            nodes = await self._dump_nodes()
+            if nodes is not None:
+                self._remember_master_node(nodes)
         if self._master_node_id is None:
             logger.warning("set_master_mute: Mix-Sink %s nicht gefunden", MIX_SINK_NAME)
             return
@@ -474,7 +575,10 @@ class PipeWireAudioBackend(AudioBackend):
     async def set_stream_volume(self, stream_name: str, volume: float) -> bool:
         """Lautstaerke eines laufenden Wiedergabe-Streams. Der Stream taucht in
         PipeWire unter dem Namen auf, den ffmpeg dem pulse-Ausgang gibt."""
-        for node in await self._dump_nodes():
+        nodes = await self._dump_nodes()
+        if nodes is None:
+            return False
+        for node in nodes:
             props = node.get("info", {}).get("props", {})
             if props.get("media.name") == stream_name or props.get("node.name") == stream_name:
                 code, _out, _err = await _run(

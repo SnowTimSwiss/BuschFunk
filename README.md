@@ -14,6 +14,10 @@ Lagerradio nicht. Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.m
   starten. Mit "endlos wiederholen" geht die Musik nie von selbst aus.
 - **Jingles:** ein Titel mit ★ wird zum Knopf im Jingle-Board und läuft auf
   Knopfdruck *über* die Musik, ohne sie zu stoppen.
+- **Aussenreporter:** in den Einstellungen einen QR-Code erzeugen, mit dem
+  Handy scannen und das Handy als eigenen, zunächst stummen Mikrofonkanal
+  verbinden. Der Reporter kann sich selbst live/stumm schalten; die Regie kann
+  ihn jederzeit trennen.
 - **Mischpult:** nur wirklich angeschlossene Geräte, je mit Live-Pegel,
   Lautstärkeregler (Eingänge bis 300%), Stumm-Schalter und bei Eingängen einem
   Kanal-Modus (Stereo/Mono/Nur links/Nur rechts) für Quellen, die nicht sauber
@@ -46,6 +50,11 @@ cd backend && AUDIO_BACKEND=demo ../.venv/bin/python run.py
 
 Wichtig: ausserhalb von `demo` zeigt die Admin-UI **nur Geräte, die wirklich
 am Rechner hängen**. Wenn dort nichts steht, hängt auch nichts dran.
+
+Der Aussenreporter braucht für den Mikrofonzugriff HTTPS (oder `localhost`).
+Für den später eingerichteten Cloudflare-Tunnel ist das automatisch gegeben;
+über eine reine `http://<Pi-IP>:8000`-Adresse lässt sich die Reporter-Seite
+öffnen, aber noch kein Mikrofon freigeben.
 
 ## Installation auf dem Pi (für den Betrieb im Lager)
 

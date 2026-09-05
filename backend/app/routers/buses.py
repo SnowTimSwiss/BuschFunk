@@ -51,14 +51,10 @@ async def update_bus(bus_id: int, body: BusUpdate, db: Session = Depends(get_db)
     if body.volume is not None:
         ceiling = MAX_VOLUME_IN if bus.direction == "in" else MAX_VOLUME_OUT
         bus.volume = max(0.0, min(ceiling, body.volume))
-    channel_mode_changed = False
     if body.channel_mode is not None and body.channel_mode in CHANNEL_MODES:
-        channel_mode_changed = body.channel_mode != bus.channel_mode
         bus.channel_mode = body.channel_mode
     db.commit()
     await apply_bus_state(bus)
-    if channel_mode_changed and runtime.audio_backend is not None:
-        await runtime.audio_backend.set_input_mode(bus.device_id, bus.channel_mode)
     await broadcast_live_state(db)
     return {"ok": True}
 

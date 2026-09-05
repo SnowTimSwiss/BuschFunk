@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#12181a">
+<title>BuschFunk – Aussenreporter</title>
+<style>
+  :root { --bg:#12181a; --panel:#1b2224; --raised:#212a2c; --border:#2c3638; --text:#ece7dd; --muted:#8b9695; --faint:#5a6465; --red:#e24e3a; --red-dim:#4a231c; --green:#4fa37b; --green-dim:#1e332a; --mono:ui-monospace,Menlo,Consolas,monospace; --sans:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:20px max(16px,env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); background:repeating-linear-gradient(135deg,#0e1315 0 1px,transparent 1px 14px),var(--bg); color:var(--text); font-family:var(--sans); }
+  .card { width:min(440px,100%); background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:24px; text-align:center; }
+  h1 { margin:0; font-size:24px; } .sub { margin:5px 0 24px; font:11px var(--mono); color:var(--faint); letter-spacing:.08em; text-transform:uppercase; }
+  .state { border:1px solid var(--border); background:var(--raised); padding:14px; border-radius:3px; font:12px var(--mono); color:var(--muted); min-height:48px; }
+  .state.live { color:var(--green); border-color:var(--green); background:var(--green-dim); } .state.error { color:var(--red); border-color:var(--red); background:var(--red-dim); }
+  .mic { width:100%; min-height:150px; margin:16px 0 12px; border:2px solid var(--red); border-radius:4px; background:var(--red-dim); color:var(--red); font:700 24px var(--sans); letter-spacing:.04em; } .mic.live { border-color:var(--green); background:var(--green-dim); color:var(--green); } .mic:disabled { opacity:.45; }
+  .radio { width:100%; padding:12px; border:1px solid var(--border); border-radius:3px; background:var(--raised); color:var(--muted); font:600 13px var(--sans); } .radio.on { color:var(--green); border-color:var(--green); }
+  .hint { margin:0; color:var(--faint); font-size:13px; line-height:1.55; } .hint strong { color:var(--muted); }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>BuschFunk</h1>
+  <div class="sub">Aussenreporter</div>
+  <div class="state" id="state">Kopplung wird geprüft…</div>
+  <button class="mic" id="mic" disabled>MIKROFON VERBINDEN</button>
+  <button class="radio" id="radio">RADIO MITHÖREN: AN</button>
+  <p class="hint" id="hint">Nach dem Verbinden bist du zunächst stumm. Tippe auf den Knopf, wenn du live gehen willst.</p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const state = document.getElementById('state'), mic = document.getElementById('mic'), radioBtn = document.getElementById('radio'), hint = document.getElementById('hint');
+  const token = new URLSearchParams(location.search).get('pair');
+  const radio = new Audio(); radio.preload = 'none'; radio.setAttribute('playsinline', '');
+  let ws, stream, recorder, muted = true, radioOn = true, wakeLock;
+
+  function show(text, kind) { state.textContent = text; state.className = 'state' + (kind ? ' ' + kind : ''); }
+  function render() { mic.textContent = stream ? (muted ? 'STUMM – ANTIPPEN FÜR LIVE' : 'LIVE – ANTIPPEN ZUM STUMMSCHALTEN') : 'MIKROFON VERBINDEN'; mic.classList.toggle('live', !!stream && !muted); }
+  async function keepAwake() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {} }
+  function sendMute() { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'mute', muted})); }
+  function renderRadio() { radioBtn.textContent = 'RADIO MITHÖREN: ' + (radioOn ? 'AN' : 'AUS'); radioBtn.classList.toggle('on', radioOn); }
+  async function startRadio() {
+    if (!radio.src) { radio.src = '/stream?_=' + Date.now(); radio.load(); }
+    try { await radio.play(); } catch (_) { hint.textContent = 'Tippe auf „Radio mithören“, falls der Browser die Wiedergabe blockiert.'; }
+  }
+  function socketURL() { return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/reporter/' + encodeURIComponent(token); }
+
+  function connectSocket() {
+    ws = new WebSocket(socketURL());
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { show('Verbunden · du bist stumm'); sendMute(); };
+    ws.onmessage = (event) => {
+      try { const message = JSON.parse(event.data); if (message.type === 'state') { muted = !!message.muted; render(); } } catch (_) {}
+    };
+    ws.onclose = (event) => {
+      if (event.code === 4403) { show('Dieser Kopplungs-Code ist abgelaufen.', 'error'); mic.disabled = true; return; }
+      show('Verbindung unterbrochen – verbinde neu…', 'error');
+      if (stream) setTimeout(connectSocket, 1200);
+    };
+    ws.onerror = () => show('Verbindung fehlgeschlagen.', 'error');
+  }
+
+  async function start() {
+    if (!token) { show('Ungültiger Kopplungs-Link.', 'error'); return; }
+    if (!window.isSecureContext && location.hostname !== 'localhost') { show('Mikrofon braucht HTTPS. Öffne diesen Link später über eure HTTPS-Adresse.', 'error'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder || !MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) { show('Dieser Browser unterstützt den Reporter-Kanal nicht. Bitte Chrome oder einen aktuellen Android-Browser verwenden.', 'error'); return; }
+    mic.disabled = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+      recorder = new MediaRecorder(stream, {mimeType:'audio/webm;codecs=opus',audioBitsPerSecond:32000});
+      recorder.ondataavailable = (event) => { if (event.data.size && ws && ws.readyState === WebSocket.OPEN) ws.send(event.data); };
+      recorder.start(250);
+      connectSocket();
+      if (radioOn) await startRadio();
+      await keepAwake();
+      mic.disabled = false;
+      render();
+    } catch (error) {
+      show(error.name === 'NotAllowedError' ? 'Mikrofon wurde nicht freigegeben.' : 'Mikrofon konnte nicht gestartet werden: ' + error.message, 'error');
+      mic.disabled = false;
+    }
+  }
+
+  mic.addEventListener('click', async () => {
+    if (!stream) { await start(); return; }
+    muted = !muted; sendMute(); render(); show(muted ? 'Verbunden · du bist stumm' : 'LIVE – dein Mikrofon geht in die Regie', muted ? '' : 'live');
+  });
+  radioBtn.addEventListener('click', async () => { radioOn = !radioOn; renderRadio(); if (radioOn) await startRadio(); else radio.pause(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && stream) keepAwake(); });
+  window.addEventListener('beforeunload', () => { if (recorder && recorder.state !== 'inactive') recorder.stop(); if (stream) stream.getTracks().forEach(track => track.stop()); });
+
+  if (!token) show('Kein Kopplungs-Code im Link.', 'error'); else { show('Bereit zum Verbinden.'); mic.disabled = false; }
+  renderRadio();
+})();
+</script>
+</body>
+</html>

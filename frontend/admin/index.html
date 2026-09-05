@@ -207,6 +207,8 @@
   }
   .modal-body .hint { font-size: 11.5px; color: var(--text-faint); margin-top: 5px; line-height: 1.5; }
   .modal-body pre { font-family: var(--mono); font-size: 11.5px; background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 12px; white-space: pre-wrap; word-break: break-word; color: var(--text-muted); }
+  .reporter-qr { display: block; width: min(250px, 100%); margin: 10px auto 14px; padding: 10px; background: #fff; border-radius: var(--radius); image-rendering: pixelated; }
+  .reporter-link { display: block; color: var(--focus); font: 11px var(--mono); overflow-wrap: anywhere; text-align: center; margin-bottom: 12px; }
   .modal-error { color: var(--onair); font-size: 12.5px; margin-top: 12px; font-family: var(--mono); }
   .modal-actions { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
   .modal-actions button { flex: 1; background: var(--panel-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px; font-size: 13px; font-weight: 600; }
@@ -407,11 +409,33 @@
       <label>Speicher</label>
       <div class="hint" id="storageLine">–</div>
 
+      <label>Aussenreporter</label>
+      <div class="hint">Handy per QR-Code als drahtloses Mikrofon koppeln.</div>
+      <button class="tool-btn" id="pairReporterBtn">▣ Aussenreporter koppeln</button>
+
       <label>Software</label>
       <div class="hint" id="versionLine" style="margin-bottom:8px">Version: –</div>
       <button class="tool-btn" id="checkUpdateBtn">↻ Nach Updates suchen</button>
     </div>
     <div class="modal-actions"><button data-close="settingsOverlay">Schliessen</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="reporterOverlay">
+  <div class="modal">
+    <div class="modal-head">Aussenreporter koppeln<button data-close="reporterOverlay">×</button></div>
+    <div class="modal-body">
+      <p class="hint" id="reporterStatus">QR-Code wird erzeugt…</p>
+      <div class="chan-meter"><span class="lbl">PEGEL</span><div class="bar" id="reporterBar"><div class="mask"></div><div class="peak"></div></div></div>
+      <img class="reporter-qr" id="reporterQr" alt="QR-Code zum Koppeln des Aussenreporters" hidden>
+      <a class="reporter-link" id="reporterLink" target="_blank" rel="noopener"></a>
+      <div class="hint">Am Handy scannen, Mikrofon erlauben und dann auf <strong>LIVE</strong> tippen. Der Code gilt zehn Minuten.</div>
+    </div>
+    <div class="modal-actions">
+      <button id="reporterMuteBtn" disabled>Reporter stumm</button>
+      <button id="disconnectReporterBtn">Reporter trennen</button>
+      <button data-close="reporterOverlay">Schliessen</button>
+    </div>
   </div>
 </div>
 
@@ -554,6 +578,7 @@
       renderPlayer(before);
       renderMixer();
       renderOnAir();
+      renderReporter();
     };
     ws.onclose = () => {
       $('connDot').classList.add('lost');
@@ -585,6 +610,8 @@
     paintBar($('playerBar'), msg.player_level, 'player');
     const jingleBar = $('jingleBar');
     if (jingleBar) paintBar(jingleBar, msg.jingle_level, 'jingle');
+    const reporterBar = $('reporterBar');
+    if (reporterBar) paintBar(reporterBar, msg.reporter_level, 'reporter');
     if (live && live.player) {
       live.player.position = msg.position;
       live.player.playing = msg.playing;
@@ -1259,6 +1286,55 @@
     $('storageLine').textContent = tracks.length + ' Titel in der Mediathek · ' + playlists.length + ' Playlist(s)';
     refreshVersion();
   });
+
+  // ---------- Aussenreporter ----------
+  $('pairReporterBtn').addEventListener('click', async () => {
+    const status = $('reporterStatus'), qr = $('reporterQr'), link = $('reporterLink');
+    status.textContent = 'QR-Code wird erzeugt…';
+    qr.hidden = true;
+    link.textContent = '';
+    $('reporterOverlay').classList.add('show');
+    try {
+      const pairing = await api('/api/reporter/pair', { method: 'POST' });
+      qr.src = pairing.qr_svg;
+      qr.hidden = false;
+      link.href = pairing.url;
+      link.textContent = pairing.url;
+      status.textContent = 'Bereit zum Scannen · gültig für zehn Minuten';
+    } catch (err) { status.textContent = 'Kopplung fehlgeschlagen: ' + err.message; }
+  });
+  $('disconnectReporterBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/reporter/disconnect', { method: 'POST' });
+      $('reporterStatus').textContent = 'Reporter wurde getrennt.';
+      $('reporterQr').hidden = true;
+    } catch (err) { fail(err); }
+  });
+  $('reporterMuteBtn').addEventListener('click', async () => {
+    const reporter = live && live.reporter;
+    if (!reporter || !reporter.connected) return;
+    const muted = !reporter.muted;
+    reporter.muted = muted;
+    renderReporter();
+    try { await api('/api/reporter/mute', { method: 'POST', body: { muted } }); }
+    catch (err) { fail(err); }
+  });
+
+  function renderReporter() {
+    if (!live || !$('reporterOverlay').classList.contains('show')) return;
+    const reporter = live.reporter;
+    if (!reporter) return;
+    const muteBtn = $('reporterMuteBtn');
+    muteBtn.disabled = !reporter.connected;
+    muteBtn.textContent = reporter.muted ? 'Reporter freigeben' : 'Reporter stumm';
+    if (reporter.connected) {
+      $('reporterStatus').textContent = reporter.muted
+        ? 'Reporter verbunden · am Handy stumm'
+        : 'Reporter ist LIVE';
+    } else if (reporter.pending) {
+      $('reporterStatus').textContent = 'Bereit zum Scannen · gültig für zehn Minuten';
+    }
+  }
 
   function tick() { $('clock').textContent = new Date().toLocaleTimeString('de-CH'); }
   tick(); setInterval(tick, 1000);

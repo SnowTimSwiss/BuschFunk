@@ -83,6 +83,8 @@ Eine einzige Seite, kein Modus-Wechsel: links das, was gerade passiert, rechts d
 
 **Jingle-Board:** alle als Jingle markierten Titel als grosse Knöpfe. Ein Tipp spielt sie **über** die laufende Musik, ohne sie zu stoppen.
 
+**Aussenreporter:** In den Einstellungen erzeugt die Regie einen QR-Code mit einem zufälligen, zehn Minuten gültigen Kopplungs-Code. Das Handy öffnet damit eine eigene Reporter-Seite, fordert nach einem bewussten Tipp Mikrofonzugriff an und liefert WebM/Opus-Audio per WebSocket als eigenen PipeWire-Stream in den Mix. Er startet stumm, kann am Handy live/stumm geschaltet und in der Regie jederzeit getrennt werden. Für echten Mikrofonzugriff benötigt die Reporter-Seite HTTPS; die Cloudflare-Adresse erfüllt das automatisch.
+
 **Mediathek:** Dateien per Drag-and-Drop oder Dateiauswahl hochladen (mehrere gleichzeitig), Titel umbenennen, als Jingle markieren, löschen. Pro Titel: sofort abspielen (der Rest der Warteschlange bleibt stehen und läuft danach weiter) oder ans Ende der Warteschlange hängen. Suchfeld für grössere Sammlungen.
 
 **Playlists:** anlegen, umbenennen, löschen; Titel aus der Mediathek hinzufügen, umsortieren, entfernen. Eine Playlist lässt sich der Reihe nach starten, zufällig starten oder an die laufende Warteschlange anhängen.

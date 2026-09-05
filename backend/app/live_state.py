@@ -73,6 +73,12 @@ def _jingle_state() -> dict:
     return runtime.jingles.state()
 
 
+def _reporter_state() -> dict:
+    if runtime.reporter is None:
+        return {"paired": False, "pending": False, "connected": False, "muted": True, "level": 0.0, "expires_at": None}
+    return runtime.reporter.state()
+
+
 async def build_live_payload(db: Session) -> dict:
     state = get_or_create_live_state(db)
     buses_db = db.query(Bus).order_by(Bus.direction, Bus.id).all()
@@ -98,6 +104,7 @@ async def build_live_payload(db: Session) -> dict:
         "master_level": master_level,
         "player": _player_state(),
         "jingle": _jingle_state(),
+        "reporter": _reporter_state(),
         "audio_ready": runtime.audio_ready,
     }
 
@@ -110,6 +117,7 @@ async def build_meters_payload(db: Session) -> dict:
     id_by_device = {b.device_id: b.id for b in db.query(Bus.id, Bus.device_id).all()}
     player = _player_state()
     jingle = _jingle_state()
+    reporter = _reporter_state()
     return {
         "type": "meters",
         "levels": {str(id_by_device[dev]): lvl for dev, lvl in levels.items() if dev in id_by_device},
@@ -118,6 +126,7 @@ async def build_meters_payload(db: Session) -> dict:
         "playing": player["playing"],
         "player_level": player["level"],
         "jingle_level": jingle["level"],
+        "reporter_level": reporter["level"],
     }
 
 

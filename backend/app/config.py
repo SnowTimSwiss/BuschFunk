@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     cloudflare_tunnel_token: str = ""
 
-    audio_backend: str = "auto"  # auto | pipewire | dummy
+    audio_backend: str = "auto"  # auto | pipewire | dummy | demo
 
     @property
     def database_file(self) -> Path:

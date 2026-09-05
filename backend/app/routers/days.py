@@ -110,6 +110,9 @@ def create_segment(day_id: int, body: SegmentCreate, db: Session = Depends(get_d
         fixed=body.fixed,
         notes=body.notes,
         media_file=body.media_file,
+        media_original_name=body.media_original_name,
+        media_role=body.media_role,
+        media_trigger=body.media_trigger,
         auto_route=body.auto_route,
     )
     db.add(segment)
@@ -158,6 +161,20 @@ def reorder_segments(day_id: int, body: SegmentReorder, db: Session = Depends(ge
     return {"ok": True}
 
 
+def _drop_media_file(db: Session, filename: str | None) -> None:
+    """Datei von der Platte werfen, sobald kein Segment mehr auf sie zeigt."""
+    if not filename:
+        return
+    still_used = (
+        db.query(Segment).filter(Segment.media_file == filename).count() > 0
+    )
+    if still_used:
+        return
+    path = settings.media_path / filename
+    if path.exists():
+        path.unlink()
+
+
 @router.post("/segments/{segment_id}/media", response_model=SegmentOut, dependencies=[Depends(require_admin)])
 async def upload_segment_media(segment_id: int, file: UploadFile, db: Session = Depends(get_db)):
     segment = db.get(Segment, segment_id)
@@ -171,8 +188,26 @@ async def upload_segment_media(segment_id: int, file: UploadFile, db: Session = 
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    previous = segment.media_file
     segment.media_file = safe_name
+    segment.media_original_name = file.filename or safe_name
     db.commit()
+    _drop_media_file(db, previous)
+    db.refresh(segment)
+    return segment
+
+
+@router.delete("/segments/{segment_id}/media", response_model=SegmentOut, dependencies=[Depends(require_admin)])
+async def delete_segment_media(segment_id: int, db: Session = Depends(get_db)):
+    segment = db.get(Segment, segment_id)
+    if segment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Segment nicht gefunden")
+    previous = segment.media_file
+    segment.media_file = None
+    segment.media_original_name = None
+    segment.media_trigger = "manual"
+    db.commit()
+    _drop_media_file(db, previous)
     db.refresh(segment)
     return segment
 

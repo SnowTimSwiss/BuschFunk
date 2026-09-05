@@ -43,6 +43,12 @@ class Segment(Base):
     fixed: Mapped[bool] = mapped_column(default=False)
     notes: Mapped[str | None] = mapped_column(nullable=True)
     media_file: Mapped[str | None] = mapped_column(nullable=True)
+    media_original_name: Mapped[str | None] = mapped_column(nullable=True)  # lesbarer Dateiname für die UI
+    # Rolle der Datei im Segment: intro | outro | full (Hauptinhalt/Aufnahme) | bed (Hintergrund)
+    media_role: Mapped[str] = mapped_column(default="full")
+    # Wann sie abgespielt wird: start (beim Aktivieren) | end (wenn die geplante
+    # Zeit abgelaufen ist) | manual (nur auf Knopfdruck in der Live-Spalte)
+    media_trigger: Mapped[str] = mapped_column(default="manual")
     auto_route: Mapped[list[int]] = mapped_column(JSON, default=list)
 
     show: Mapped["Show"] = relationship(back_populates="segments", foreign_keys=[show_id])
@@ -65,6 +71,7 @@ class Bus(Base):
     display_name: Mapped[str] = mapped_column(default="Neuer Bus")
     direction: Mapped[str] = mapped_column(default="in")  # in (Eingang) | out (Ausgang, z.B. Monitor)
     is_muted: Mapped[bool] = mapped_column(default=True)
+    volume: Mapped[float] = mapped_column(default=1.0)  # 0.0 .. 1.5
     last_seen_active: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
@@ -115,6 +122,3 @@ class LiveState(Base):
     segment_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     elapsed_offset_seconds: Mapped[int] = mapped_column(default=0)
     is_on_air: Mapped[bool] = mapped_column(default=False)
-    notfall_mode: Mapped[str | None] = mapped_column(nullable=True)  # sos | mute_all | unterbruch
-    notfall_message: Mapped[str | None] = mapped_column(nullable=True)
-    notfall_acked: Mapped[bool] = mapped_column(default=True)

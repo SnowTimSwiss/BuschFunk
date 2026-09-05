@@ -25,6 +25,9 @@ def _segment_to_dict(segment: Segment) -> dict:
         "fixed": segment.fixed,
         "notes": segment.notes,
         "media_file": segment.media_file,
+        "media_original_name": segment.media_original_name,
+        "media_role": segment.media_role,
+        "media_trigger": segment.media_trigger,
         "auto_route": segment.auto_route,
         "children": [_segment_to_dict(c) for c in segment.children],
     }
@@ -82,6 +85,9 @@ def _create_segments(db: Session, show_id: int, items: list[dict], parent_id: in
             fixed=bool(item.get("fixed", False)),
             notes=item.get("notes"),
             media_file=name_map.get(media_file, media_file) if media_file else None,
+            media_original_name=item.get("media_original_name"),
+            media_role=item.get("media_role", "full"),
+            media_trigger=item.get("media_trigger", "manual"),
             auto_route=item.get("auto_route", []),
         )
         db.add(segment)

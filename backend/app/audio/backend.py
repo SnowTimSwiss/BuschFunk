@@ -10,15 +10,25 @@ class DiscoveredBus:
     connected: bool = True
 
 
+@dataclass
+class PlayerStatus:
+    playing: bool = False
+    title: str | None = None
+    segment_id: int | None = None
+
+
 class AudioBackend(ABC):
     """Abstraktion über die tatsächliche Audio-Infrastruktur (PipeWire) bzw.
-    ein Dummy für Entwicklung/Demo ohne echte Hardware.
+    ein No-Op-Backend für Entwicklung ohne echte Hardware.
 
     Ein Bus ist entweder ein Eingang (direction="in": eine Audioquelle, die
     dauerhaft in den einen gemeinsamen Loopback-Mix einspeist) oder ein
     Ausgang (direction="out": ein Gerät, das den fertigen Mix abbekommt,
-    z.B. Monitor-Lautsprecher). Mute/Unmute passiert immer am jeweiligen
-    Gerät selbst, nie am ffmpeg-Stream.
+    z.B. Monitor-Lautsprecher). Mute/Unmute und Lautstärke passieren immer am
+    jeweiligen Gerät selbst, nie am ffmpeg-Stream.
+
+    Es werden ausschliesslich Geräte gemeldet, die tatsächlich am System
+    hängen - keine Platzhalter, keine Default-Einträge.
     """
 
     @abstractmethod
@@ -31,26 +41,34 @@ class AudioBackend(ABC):
 
     @abstractmethod
     async def discover_buses(self) -> list[DiscoveredBus]:
-        """Aktuell sichtbare Hardware-Quellen (ohne den internen Player-Bus)."""
+        """Aktuell wirklich angeschlossene Quellen/Ausgänge."""
 
     @abstractmethod
     async def set_mute(self, device_id: str, muted: bool) -> None:
         ...
 
     @abstractmethod
+    async def set_volume(self, device_id: str, volume: float) -> None:
+        """0.0 (aus) .. 1.0 (Normalpegel) .. 1.5 (aufgedreht)."""
+
+    @abstractmethod
     async def get_levels(self) -> dict[str, float]:
         """device_id -> Pegel 0.0 (still) .. 1.0 (voll ausgesteuert)."""
 
     @abstractmethod
-    async def mute_all(self) -> None:
-        """Notfall: alle Busse (inkl. Player) stumm."""
+    async def get_master_level(self) -> float:
+        """Pegel des fertigen Mixes, also exakt das, was rausgeht."""
 
     @abstractmethod
-    async def play_file(self, path: str) -> None:
+    async def play_file(self, path: str, title: str | None = None, segment_id: int | None = None) -> None:
         """Interner Player-Bus: eine Datei (Jingle/Intro/Outro) in den Mix spielen."""
 
     @abstractmethod
     async def stop_player(self) -> None:
+        ...
+
+    @abstractmethod
+    def player_status(self) -> PlayerStatus:
         ...
 
     @abstractmethod

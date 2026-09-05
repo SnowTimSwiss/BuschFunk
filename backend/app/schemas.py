@@ -11,6 +11,9 @@ class SegmentBase(BaseModel):
     fixed: bool = False
     notes: str | None = None
     media_file: str | None = None
+    media_original_name: str | None = None
+    media_role: str = "full"        # intro | outro | full | bed
+    media_trigger: str = "manual"   # start | end | manual
     auto_route: list[int] = []
 
 
@@ -26,6 +29,9 @@ class SegmentUpdate(BaseModel):
     fixed: bool | None = None
     notes: str | None = None
     media_file: str | None = None
+    media_original_name: str | None = None
+    media_role: str | None = None
+    media_trigger: str | None = None
     auto_route: list[int] | None = None
 
 
@@ -76,6 +82,7 @@ class BusOut(BaseModel):
     display_name: str
     direction: str = "in"
     is_muted: bool
+    volume: float = 1.0
     level: float = 0.0
     connected: bool = True
 
@@ -84,8 +91,9 @@ class BusRename(BaseModel):
     display_name: str
 
 
-class BusMute(BaseModel):
-    is_muted: bool
+class BusUpdate(BaseModel):
+    is_muted: bool | None = None
+    volume: float | None = None
 
 
 # ---------- ScheduleEntry ----------
@@ -138,9 +146,7 @@ class LiveStatus(BaseModel):
     current_segment_id: int | None
     elapsed_seconds: int
     is_on_air: bool
-    notfall_mode: str | None
-    notfall_message: str | None
-    notfall_acked: bool
+    master_level: float = 0.0
     buses: list[BusOut]
 
 
@@ -150,6 +156,10 @@ class GoToSegment(BaseModel):
 
 class NotesUpdate(BaseModel):
     notes: str
+
+
+class PlayMedia(BaseModel):
+    segment_id: int | None = None
 
 
 # ---------- System / update ----------

@@ -10,17 +10,21 @@ Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.md).
 python3 -m venv .venv
 ./.venv/bin/pip install -r backend/requirements.txt
 cp .env.example .env
-cd backend && AUDIO_BACKEND=dummy ../.venv/bin/python run.py
+cd backend && AUDIO_BACKEND=demo ../.venv/bin/python run.py
 ```
 
 - Admin-UI: <http://localhost:8000/admin/> (Setup-Code steht im Terminal-Log)
 - Hörer-Ansicht: <http://localhost:8000/listen/>
 - API-Doku: <http://localhost:8000/docs>
 
-Ohne `AUDIO_BACKEND=dummy` erkennt die App automatisch, ob ein PipeWire-
-Server erreichbar ist, und fällt sonst selbst auf den Dummy-Modus zurück
-(simulierte Busse/Pegel, kein echter Stream) - praktisch für Entwicklung
-und Demos.
+`AUDIO_BACKEND` steuert, woher der Ton kommt:
+
+- `auto` (Standard): PipeWire, falls erreichbar - sonst gar keine Geräte.
+- `pipewire` / `dummy`: das jeweilige Backend erzwingen.
+- `demo`: simulierte Geräte und Pegel für Entwicklung und Screenshots.
+
+Wichtig: ausserhalb von `demo` zeigt die Admin-UI **nur Geräte, die wirklich
+am Rechner hängen**. Wenn dort nichts steht, hängt auch nichts dran.
 
 ## Installation auf dem Pi (für den Betrieb im Lager)
 

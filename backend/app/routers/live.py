@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -5,10 +6,19 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import runtime
 from ..auth import require_admin
+from ..config import settings
 from ..db import get_db
-from ..live_state import build_live_payload, broadcast_live_state, flatten_playable, get_or_create_live_state
-from ..models import Bus, Segment, Show
-from ..schemas import GoToSegment, NotesUpdate
+from ..live_state import (
+    build_live_payload,
+    broadcast_live_state,
+    compute_elapsed_seconds,
+    flatten_playable,
+    get_or_create_live_state,
+)
+from ..models import Segment, Show
+from ..schemas import GoToSegment, NotesUpdate, PlayMedia
+
+logger = logging.getLogger("buschfunk.live")
 
 router = APIRouter(prefix="/api/live", tags=["live"], dependencies=[Depends(require_admin)])
 public_router = APIRouter(prefix="/api/live", tags=["live-public"])
@@ -26,10 +36,28 @@ def _load_show(db: Session, show_id: int) -> Show:
     return show
 
 
-def _reset_to_segment(state, segment_id: int | None) -> None:
+async def play_segment_media(db: Session, segment: Segment) -> bool:
+    """Die am Segment hinterlegte Datei über den internen Player in den Mix
+    spielen. Gibt False zurück, wenn nichts hinterlegt oder die Datei weg ist."""
+    if runtime.audio_backend is None or not segment.media_file:
+        return False
+    path = settings.media_path / segment.media_file
+    if not path.exists():
+        logger.warning("Mediendatei fehlt: %s", path)
+        return False
+    await runtime.audio_backend.play_file(str(path), title=segment.title, segment_id=segment.id)
+    return True
+
+
+async def _reset_to_segment(db: Session, state, segment_id: int | None) -> None:
     state.current_segment_id = segment_id
     state.elapsed_offset_seconds = 0
     state.segment_started_at = datetime.now(timezone.utc) if state.is_on_air else None
+    runtime.fired_end_media.discard(segment_id)  # neuer Durchlauf, "am Ende" darf wieder feuern
+
+    segment = db.get(Segment, segment_id) if segment_id else None
+    if segment and state.is_on_air and segment.media_trigger == "start":
+        await play_segment_media(db, segment)
 
 
 @public_router.get("/status")
@@ -42,9 +70,11 @@ async def select_show(body: dict, db: Session = Depends(get_db)):
     show_id = body.get("show_id")
     show = _load_show(db, show_id)
     state = get_or_create_live_state(db)
+    keep = state.active_show_id == show.id
     state.active_show_id = show.id
-    flat = flatten_playable(show)
-    _reset_to_segment(state, flat[0].id if flat else None)
+    if not keep:
+        flat = flatten_playable(show)
+        await _reset_to_segment(db, state, flat[0].id if flat else None)
     db.commit()
     await broadcast_live_state(db)
     return await build_live_payload(db)
@@ -56,7 +86,27 @@ async def goto_segment(body: GoToSegment, db: Session = Depends(get_db)):
     if segment is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Segment nicht gefunden")
     state = get_or_create_live_state(db)
-    _reset_to_segment(state, segment.id)
+    state.active_show_id = segment.show_id
+    await _reset_to_segment(db, state, segment.id)
+    db.commit()
+    await broadcast_live_state(db)
+    return await build_live_payload(db)
+
+
+async def _step(db: Session, delta: int) -> dict:
+    state = get_or_create_live_state(db)
+    if state.active_show_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kein Tag ausgewählt")
+    show = _load_show(db, state.active_show_id)
+    ids = [s.id for s in flatten_playable(show)]
+    if not ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Der Tag hat noch keine Segmente")
+    if state.current_segment_id in ids:
+        idx = ids.index(state.current_segment_id)
+        new_id = ids[max(0, min(len(ids) - 1, idx + delta))]
+    else:
+        new_id = ids[0]
+    await _reset_to_segment(db, state, new_id)
     db.commit()
     await broadcast_live_state(db)
     return await build_live_payload(db)
@@ -64,37 +114,21 @@ async def goto_segment(body: GoToSegment, db: Session = Depends(get_db)):
 
 @router.post("/next")
 async def next_segment(db: Session = Depends(get_db)):
-    state = get_or_create_live_state(db)
-    if state.active_show_id is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kein Tag ausgewählt")
-    show = _load_show(db, state.active_show_id)
-    flat = flatten_playable(show)
-    ids = [s.id for s in flat]
-    if state.current_segment_id in ids:
-        idx = ids.index(state.current_segment_id)
-        new_id = ids[idx + 1] if idx + 1 < len(ids) else ids[idx]
-    else:
-        new_id = ids[0] if ids else None
-    _reset_to_segment(state, new_id)
-    db.commit()
-    await broadcast_live_state(db)
-    return await build_live_payload(db)
+    return await _step(db, +1)
 
 
 @router.post("/prev")
 async def prev_segment(db: Session = Depends(get_db)):
+    return await _step(db, -1)
+
+
+@router.post("/restart-timer")
+async def restart_timer(db: Session = Depends(get_db)):
+    """Uhr des aktuellen Segments zurück auf null - ohne das Segment zu wechseln."""
     state = get_or_create_live_state(db)
-    if state.active_show_id is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kein Tag ausgewählt")
-    show = _load_show(db, state.active_show_id)
-    flat = flatten_playable(show)
-    ids = [s.id for s in flat]
-    if state.current_segment_id in ids:
-        idx = ids.index(state.current_segment_id)
-        new_id = ids[idx - 1] if idx > 0 else ids[idx]
-    else:
-        new_id = ids[0] if ids else None
-    _reset_to_segment(state, new_id)
+    state.elapsed_offset_seconds = 0
+    state.segment_started_at = datetime.now(timezone.utc) if state.is_on_air else None
+    runtime.fired_end_media.discard(state.current_segment_id)
     db.commit()
     await broadcast_live_state(db)
     return await build_live_payload(db)
@@ -107,8 +141,6 @@ async def set_on_air(body: dict, db: Session = Depends(get_db)):
     if is_on_air and not state.is_on_air:
         state.segment_started_at = datetime.now(timezone.utc)
     elif not is_on_air and state.is_on_air:
-        from ..live_state import compute_elapsed_seconds
-
         state.elapsed_offset_seconds = compute_elapsed_seconds(state)
         state.segment_started_at = None
     state.is_on_air = is_on_air
@@ -129,49 +161,22 @@ async def update_notes(body: NotesUpdate, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-async def _set_notfall(db: Session, mode: str | None, message: str | None) -> dict:
+@router.post("/play-media")
+async def play_media(body: PlayMedia, db: Session = Depends(get_db)):
     state = get_or_create_live_state(db)
-    state.notfall_mode = mode
-    state.notfall_message = message
-    state.notfall_acked = mode is None
-    db.commit()
+    segment_id = body.segment_id or state.current_segment_id
+    segment = db.get(Segment, segment_id) if segment_id else None
+    if segment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Segment nicht gefunden")
+    if not await play_segment_media(db, segment):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "An diesem Segment hängt keine Audiodatei")
     await broadcast_live_state(db)
-    return await build_live_payload(db)
+    return {"ok": True}
 
 
-@router.post("/emergency/sos")
-async def emergency_sos(db: Session = Depends(get_db)):
-    """SOS: alle Hardware-Busse stumm, interner Player-Bus bleibt aktiv."""
+@router.post("/stop-media")
+async def stop_media(db: Session = Depends(get_db)):
     if runtime.audio_backend is not None:
-        for bus in db.query(Bus).all():
-            await runtime.audio_backend.set_mute(bus.device_id, True)
-            bus.is_muted = True
-    db.commit()
-    return await _set_notfall(db, "sos", "NOTFALL: nur Playlist läuft – Mischpult & weitere Busse stumm")
-
-
-@router.post("/emergency/mute-all")
-async def emergency_mute_all(db: Session = Depends(get_db)):
-    """Alles stumm: auch der interne Player-Bus wird beendet."""
-    if runtime.audio_backend is not None:
-        await runtime.audio_backend.mute_all()
-    for bus in db.query(Bus).all():
-        bus.is_muted = True
-    db.commit()
-    return await _set_notfall(db, "mute_all", "ALLES STUMM – kein Bus sendet gerade Audio")
-
-
-@router.post("/emergency/unterbruch")
-async def emergency_unterbruch(db: Session = Depends(get_db)):
-    return await _set_notfall(
-        db, "unterbruch", "TECHNISCHER UNTERBRUCH – Hörer:innen sehen einen Platzhalter-Hinweis"
-    )
-
-
-@router.post("/emergency/ack")
-async def emergency_ack(db: Session = Depends(get_db)):
-    state = get_or_create_live_state(db)
-    state.notfall_acked = True
-    db.commit()
+        await runtime.audio_backend.stop_player()
     await broadcast_live_state(db)
-    return await build_live_payload(db)
+    return {"ok": True}

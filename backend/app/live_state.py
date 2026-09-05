@@ -40,17 +40,28 @@ def compute_elapsed_seconds(state: LiveState) -> int:
     return elapsed
 
 
+async def _levels() -> tuple[dict[str, float], float]:
+    if runtime.audio_backend is None:
+        return {}, 0.0
+    try:
+        return await runtime.audio_backend.get_levels(), await runtime.audio_backend.get_master_level()
+    except Exception:
+        return {}, 0.0
+
+
+def _player_payload() -> dict:
+    if runtime.audio_backend is None:
+        return {"playing": False, "title": None, "segment_id": None}
+    status = runtime.audio_backend.player_status()
+    return {"playing": status.playing, "title": status.title, "segment_id": status.segment_id}
+
+
 async def build_live_payload(db: Session) -> dict:
     state = get_or_create_live_state(db)
     current_segment = db.get(Segment, state.current_segment_id) if state.current_segment_id else None
 
-    buses_db = db.query(Bus).order_by(Bus.id).all()
-    levels: dict[str, float] = {}
-    if runtime.audio_backend is not None:
-        try:
-            levels = await runtime.audio_backend.get_levels()
-        except Exception:
-            levels = {}
+    buses_db = db.query(Bus).order_by(Bus.direction, Bus.id).all()
+    levels, master_level = await _levels()
 
     bus_payload = [
         {
@@ -59,6 +70,7 @@ async def build_live_payload(db: Session) -> dict:
             "display_name": b.display_name,
             "direction": b.direction,
             "is_muted": b.is_muted,
+            "volume": b.volume,
             "level": levels.get(b.device_id, 0.0),
             "connected": b.device_id in runtime.last_seen_device_ids,
         }
@@ -72,10 +84,23 @@ async def build_live_payload(db: Session) -> dict:
         "current_segment_title": current_segment.title if current_segment else None,
         "elapsed_seconds": compute_elapsed_seconds(state),
         "is_on_air": state.is_on_air,
-        "notfall_mode": state.notfall_mode,
-        "notfall_message": state.notfall_message,
-        "notfall_acked": state.notfall_acked,
         "buses": bus_payload,
+        "master_level": master_level,
+        "player": _player_payload(),
+        "audio_ready": runtime.audio_ready,
+    }
+
+
+async def build_meters_payload(db: Session) -> dict:
+    """Kleines, häufig gesendetes Paket nur mit den Pegeln - damit die Meter
+    flüssig laufen, ohne jedes Mal den ganzen Live-Zustand zu verschicken."""
+    levels, master_level = await _levels()
+    id_by_device = {b.device_id: b.id for b in db.query(Bus.id, Bus.device_id).all()}
+    return {
+        "type": "meters",
+        "levels": {str(id_by_device[dev]): lvl for dev, lvl in levels.items() if dev in id_by_device},
+        "master_level": master_level,
+        "player_playing": _player_payload()["playing"],
     }
 
 

@@ -76,9 +76,9 @@ AdminUser
 
 ## 5. Admin-UI – Funktionsumfang
 
-**Tage/Shows-Liste** (Sidebar): Tage anlegen, auswählen, Anzahl Segmente je Tag auf einen Blick.
+**Tage/Shows-Liste** (Sidebar): Tage anlegen, umbenennen, löschen, auswählen; Anzahl Segmente je Tag auf einen Blick.
 
-**Ablauf-Editor** (Rundown): Segmente hinzufügen/bearbeiten/löschen/per Drag-and-Drop umsortieren, Segmente mit Kindern aufklappbar, Datei-Upload direkt am Segment (Intro/Outro/Aufnahme), "Fixpunkt"-Markierung.
+**Ablauf-Editor** (Rundown): Segmente hinzufügen/bearbeiten/löschen/per Drag-and-Drop umsortieren, Unterpunkte direkt an der Segmentzeile anlegen, "Fixpunkt"-Markierung. Datei-Upload direkt am Segment, dabei wird zusätzlich festgelegt, **was** die Datei ist (Intro / Outro / Aufnahme / Jingle) und **wann** sie läuft (automatisch beim Segmentstart, automatisch am geplanten Ende, oder nur auf Knopfdruck). Automatisch gestartete Dateien laufen nur, wenn ON AIR ist.
 
 **Live-Steuerung:**
 - Aktuelles Segment **massiv hervorgehoben**: eigener Panel-Rahmen in Warnfarbe, pulsierender "LIVE"-Badge – muss auch im Stress sofort auffallen.
@@ -86,8 +86,9 @@ AdminUser
 - **Fixpunkt-Anzeige:** Restzeit bis zum nächsten als "fix" markierten Segment, berechnet aus der Kette der verbleibenden Segmentdauern.
 - **"Als nächstes"-Vorschau** direkt sichtbar, ohne scrollen zu müssen.
 - **Transport:** Zurück/Weiter zum Wechseln des aktiven Segments, ON-AIR/OFF-AIR-Umschalter.
-- **Notfall-Buttons** (gut erreichbar, visuell abgesetzt): "SOS – Playlist" (alle Live-Busse stumm, nur Player-Bus aktiv), "Alles stumm", "Technischer Unterbruch" (Platzhalter-Hinweis für Hörer:innen). Alle drei lösen einen deutlichen Banner-Hinweis aus, bis er quittiert wird.
-- **Audio-Busse:** dynamisch erkannte Liste, je Bus ein Mute/Unmute-Schalter **und** eine Pegelanzeige (echte Analyse über PipeWire-Monitor-Ports/Web-Audio, zeigt ob tatsächlich Signal ankommt).
+- **Transport bleibt jederzeit erreichbar:** auf schmalen Bildschirmen liegt eine feste Leiste am unteren Rand mit Zurück/Weiter, Countdown und dem ON-AIR/OFF-AIR-Schalter - Off Air gehen ist immer einen Tipp entfernt, ohne zu scrollen. Alle Transport-Aktionen schalten die UI sofort um und lassen den Server nachziehen, statt auf die Antwort zu warten.
+- **Mischpult-Ansicht:** aufgelistet wird nur, was tatsächlich am Pi hängt - keine Platzhalter, keine Default-Ausgänge. Je Gerät: Live-Pegelanzeige mit Peak-Hold, Lautstärkeregler (`wpctl set-volume`) und ein Stumm/An-Schalter. Namen und Lautstärken bleiben gespeichert und werden beim Wiedereinstecken automatisch aufs Gerät zurückgeschrieben. Geräte, die mal dran waren und gerade fehlen, stehen zusammengeklappt darunter und lassen sich vergessen.
+- **Master-Meter:** eigener, grosser Pegel des fertigen Mixes ("das geht raus") mit Klartext-Hinweis, ob gerade gar nichts rausgeht oder übersteuert wird.
 - **Notizen pro Segment:** Textfeld direkt am aktuellen Segment, gespeichert pro Segment. Zusätzlich ein **Pop-out-Button**, der ein zweites Browserfenster öffnet (für zweiten Bildschirm/Tablet) mit grossem Countdown, "Als nächstes" und denselben Notizen, live synchronisiert.
 
 **Export/Import eines Tages:**
@@ -100,7 +101,13 @@ AdminUser
 
 ## 6. Listener-UI – Funktionsumfang
 
-Bewusst minimal: Play/Stop-Button für den Stream, Anzeige der öffentlichen Sendezeiten (aus dem Sendezeiten-Tab), evtl. Anzeige des aktuell laufenden Segment-Titels. Kein Login nötig, für alle offen (lokal wie extern über die Cloudflare-Subdomain).
+Bewusst minimal: Play/Stop, Anzeige der öffentlichen Sendezeiten (aus dem Sendezeiten-Tab) und des aktuell laufenden Segment-Titels. Kein Login nötig, für alle offen (lokal wie extern über die Cloudflare-Subdomain).
+
+Dazu drei Dinge, die im Lager praktisch zählen:
+
+- **Autostart:** die Seite verbindet sich beim Öffnen von selbst. Blockt der Browser Autoplay (Handy), erscheint stattdessen ein grosser "Antippen"-Knopf.
+- **Hintergrund-Wiedergabe:** über die Media Session API laufen Titel und Play/Pause auf dem Sperrbildschirm; der Stream läuft weiter, wenn das Handy in die Tasche wandert.
+- **Automatischer Reconnect:** reisst die Verbindung (WLAN-Rand, Stream-Neustart), verbindet die Seite mit wachsendem Abstand von selbst neu und landet dabei immer an der Live-Kante statt in einem alten Puffer.
 
 ## 7. Auth-Flow (Admin-Bereich)
 
@@ -125,10 +132,11 @@ Da die Admin-UI über die öffentliche Subdomain erreichbar ist, muss verhindert
 
 ## 10. Offene Punkte für spätere Iterationen
 
-- Echte Pegelmessung der Busse (PipeWire-Monitor-Ports / Web Audio API) – als `ffmpeg -af astats`-Messprozess pro Bus umgesetzt, aber nur auf echter Hardware verifizierbar.
-- Emergency-Buttons steuern echtes Audio-Routing an (Mute auf PipeWire-Ebene), nicht nur UI-Zustand – ebenfalls nur auf echter Hardware verifizierbar.
+- Pegelmessung und Lautstärkeregelung laufen über je einen dauerhaften `ffmpeg -af astats`-Prozess pro Gerät bzw. `wpctl set-volume` – auf echter Hardware noch zu verifizieren (siehe `docs/audio-setup.md`).
 - Feingranulare Rechte (falls später mehr als eine Person parallel Admin-Zugriff braucht) – aktuell reicht ein einzelner Admin-Account.
+
+**Bewusst wieder entfernt:** Notfall-Buttons (SOS-Playlist / Alles stumm / Technischer Unterbruch) samt Banner und der Hell-Modus. Stumm schalten geht direkt und schneller über die Geräteliste; ein zweites Farbschema kostet nur Pflege und hilft in einer abgedunkelten Regie niemandem.
 
 ---
 
-*Ein UI-Mockup (statisch, nicht ans Backend angebunden) für die Admin-Oberfläche existiert als HTML-Referenz für Layout, Farbschema (Konsolen-/Broadcast-Look, dunkel, mit Live-Warnfarbe für das aktuelle Segment) und Interaktionsfluss – siehe `frontend/admin/`, das daraus abgeleitet und ans Backend angebunden wurde.*
+*Farbschema: Konsolen-/Broadcast-Look, durchgehend dunkel, mit Live-Warnfarbe für das aktuelle Segment. Beide UIs kommen ohne externe Fonts und ohne Frontend-Framework aus – im Lager-WLAN gibt es oft kein Internet, und eine Seite, die auf Google Fonts wartet, ist genau dann langsam, wenn es drauf ankommt.*

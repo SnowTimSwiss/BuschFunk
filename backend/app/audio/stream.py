@@ -38,7 +38,7 @@ def _build_ffmpeg_cmd(source: str) -> list[str]:
         "-loglevel",
         "warning",
         "-f",
-        "pipewire",
+        "pulse",
         "-i",
         source,
         "-c:a",

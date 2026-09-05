@@ -53,6 +53,16 @@ fi
 
 mkdir -p media
 
+# 3b. Persistenten Journal-Speicher aktivieren -----------------------------
+# Ohne das landen Logs (inkl. dem Setup-Code) nur im flüchtigen Runtime-Journal
+# und "journalctl --user" findet je nach System gar keine Journal-Dateien.
+if [ ! -d /var/log/journal ]; then
+  echo "-- aktiviere persistenten systemd-Journal-Speicher --"
+  sudo mkdir -p /var/log/journal
+  sudo systemd-tmpfiles --create --prefix /var/log/journal
+  sudo systemctl restart systemd-journald
+fi
+
 # 4. Icecast automatisch konfigurieren (Passwort aus .env übernehmen) ------
 if command -v icecast2 >/dev/null && [ -d /etc/icecast2 ]; then
   ICECAST_SOURCE_PW=$(grep '^ICECAST_SOURCE_PASSWORD=' .env | cut -d= -f2-)
@@ -177,7 +187,10 @@ echo "-- warte auf Serverstart --"
 CODE=""
 for _ in $(seq 1 15); do
   sleep 1
-  CODE=$(journalctl --user -u buschfunk.service --no-pager 2>/dev/null \
+  # "_SYSTEMD_USER_UNIT=" statt "--user -u" - funktioniert zuverlässig auch
+  # dann, wenn journalctl im "--user"-Modus (abhängig vom System) keine
+  # Journal-Dateien findet.
+  CODE=$(journalctl _SYSTEMD_USER_UNIT=buschfunk.service --no-pager 2>/dev/null \
     | grep -A1 "BuschFunk Setup-Code" | grep -oE '[0-9]{6}' | tail -1 || true)
   [ -n "$CODE" ] && break
 done
@@ -198,7 +211,7 @@ if [ -n "$CODE" ]; then
 else
   echo ""
   echo " Setup-Code steht im Log (noch nicht gefunden, ggf. kurz warten):"
-  echo "   journalctl --user -u buschfunk.service -f"
+  echo "   journalctl _SYSTEMD_USER_UNIT=buschfunk.service -f"
 fi
 echo "======================================================"
 if [ -z "$EXTERNAL_URL" ]; then

@@ -140,7 +140,7 @@ class PipeWireAudioBackend(AudioBackend):
             code, _out, err = await _run(
                 "ffmpeg",
                 "-f",
-                "pipewire",
+                "pulse",
                 "-i",
                 device_id,
                 "-t",
@@ -198,4 +198,8 @@ class PipeWireAudioBackend(AudioBackend):
         self._player_proc = None
 
     def mix_monitor_source(self) -> str:
-        return MIX_SINK_NAME
+        # ffmpeg liest über den "pulse"-Demuxer (PipeWire stellt dafür den
+        # pipewire-pulse-Kompatibilitätsserver bereit); ein Sink wird darüber
+        # nur über seine ".monitor"-Quelle abgegriffen, nicht über den
+        # Sink-Namen selbst.
+        return f"{MIX_SINK_NAME}.monitor"

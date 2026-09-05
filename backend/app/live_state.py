@@ -29,6 +29,11 @@ async def apply_bus_state(bus: Bus, on_air: bool) -> None:
     muted = bus.is_muted or (bus.direction == "in" and not on_air)
     await backend.set_mute(bus.device_id, muted)
     await backend.set_volume(bus.device_id, bus.volume)
+    if bus.direction == "in":
+        # idempotent - legt/entfernt die Kanalkorrektur nur bei tatsaechlicher
+        # Aenderung an; so landet ein gespeicherter Modus auch nach einem
+        # Neustart oder erneuten Einstecken wieder richtig.
+        await backend.set_input_mode(bus.device_id, bus.channel_mode)
 
 
 async def apply_all_buses(db: Session) -> None:
@@ -36,6 +41,22 @@ async def apply_all_buses(db: Session) -> None:
     for bus in db.query(Bus).all():
         if bus.device_id in runtime.last_seen_device_ids:
             await apply_bus_state(bus, on_air)
+
+
+async def apply_on_air_transition(db: Session, on_air: bool) -> None:
+    """Mikrofone schalten UND die Musik mitnehmen: "off air" soll wirklich
+    still sein, nicht nur die Mikros zumachen - sonst laeuft die Musik einfach
+    unbeirrt weiter, obwohl gerade niemand auf Sendung ist. Ein Jingle, der
+    gerade laeuft, wird abgebrochen; die Musik faded weich aus und wieder ein,
+    ausser sie war schon von Hand pausiert."""
+    await apply_all_buses(db)
+    if runtime.player is not None:
+        if on_air:
+            await runtime.player.resume_from_off_air()
+        else:
+            await runtime.player.pause_for_off_air()
+    if runtime.jingles is not None and not on_air:
+        await runtime.jingles.fade_stop()
 
 
 async def _levels() -> tuple[dict[str, float], float]:
@@ -51,13 +72,13 @@ def _player_state() -> dict:
     if runtime.player is None:
         return {"playing": False, "paused": False, "title": None, "position": 0.0,
                 "duration": 0.0, "queue_length": 0, "queue_index": 0, "queue_ahead": [],
-                "repeat": True, "volume": 1.0, "track_id": None}
+                "repeat": True, "volume": 1.0, "track_id": None, "level": 0.0}
     return runtime.player.state()
 
 
 def _jingle_state() -> dict:
     if runtime.jingles is None:
-        return {"playing": False, "title": None}
+        return {"playing": False, "title": None, "level": 0.0}
     return runtime.jingles.state()
 
 
@@ -77,6 +98,7 @@ async def build_live_payload(db: Session) -> dict:
                 "direction": b.direction,
                 "is_muted": b.is_muted,
                 "volume": b.volume,
+                "channel_mode": b.channel_mode,
                 "level": levels.get(b.device_id, 0.0),
                 "connected": b.device_id in runtime.last_seen_device_ids,
             }
@@ -96,12 +118,15 @@ async def build_meters_payload(db: Session) -> dict:
     levels, master_level = await _levels()
     id_by_device = {b.device_id: b.id for b in db.query(Bus.id, Bus.device_id).all()}
     player = _player_state()
+    jingle = _jingle_state()
     return {
         "type": "meters",
         "levels": {str(id_by_device[dev]): lvl for dev, lvl in levels.items() if dev in id_by_device},
         "master_level": master_level,
         "position": player["position"],
         "playing": player["playing"],
+        "player_level": player["level"],
+        "jingle_level": jingle["level"],
     }
 
 

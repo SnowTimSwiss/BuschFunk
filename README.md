@@ -15,9 +15,13 @@ Lagerradio nicht. Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.m
 - **Jingles:** ein Titel mit ★ wird zum Knopf im Jingle-Board und läuft auf
   Knopfdruck *über* die Musik, ohne sie zu stoppen.
 - **Mischpult:** nur wirklich angeschlossene Geräte, je mit Live-Pegel,
-  Lautstärkeregler und Stumm-Schalter, dazu ein Master-Meter.
-- **Auf Sendung:** ein Schalter öffnet alle Mikrofone; off air läuft die Musik
-  weiter, der Stream reisst nie ab.
+  Lautstärkeregler (Eingänge bis 300%), Stumm-Schalter und bei Eingängen einem
+  Kanal-Modus (Stereo/Mono/Nur links/Nur rechts) für Quellen, die nicht sauber
+  Stereo liefern, dazu ein Master-Meter.
+- **Auf Sendung:** ein Schalter öffnet alle Mikrofone und faded die Musik ein;
+  off air faded sie weich aus und pausiert, der Icecast-Stream reisst nie ab.
+- **Limiter:** der Stream selbst hat einen Deckel bei 95% - schützt vor hartem
+  Verzerren, wenn am Pult mal jemand zu heiss reingeht.
 
 ## Schnellstart (lokale Entwicklung, ohne echte Audio-Hardware)
 

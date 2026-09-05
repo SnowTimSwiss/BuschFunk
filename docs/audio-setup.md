@@ -48,6 +48,22 @@ echten Pi mit angeschlossenem Mischpult unbedingt durchgehen.
    `<name>.monitor`; das Master-Meter liest `buschfunk-mix.monitor`.
 8. **Lautstärke**: `wpctl set-volume <node-id> 0.80` sollte hörbar leiser machen
    (der Regler in der UI macht genau das, `wpctl set-mute` den Stumm-Schalter).
+   **Wichtig für Werte über 100%**: `wpctl set-volume <node-id> 1.5` kappt ohne
+   weiteres Flag intern bei 100% - erst `wpctl set-volume -l 5.0 <node-id> 1.5`
+   setzt wirklich 150%. Genau das war der Bug hinter "auch 150% reicht nicht":
+   BuschFunk hat das `-l`-Limit lange nicht mitgeschickt. Jetzt setzt jeder
+   `set-volume`-Aufruf `-l 5.0`, Eingänge lassen sich in der UI bis 300% aufdrehen.
+9. **Kanalkorrektur (Mono/Links/Rechts)**: liefert eine Quelle nur auf einem
+   Kanal etwas oder ist von Haus aus mono, hilft reine Lautstärke nichts - dafür
+   gibt es pro Eingang in der Mischpult-Ansicht einen Kanal-Modus. Ungleich
+   "Stereo" ersetzt BuschFunk das direkte `pw-link`-Routing durch einen eigenen
+   ffmpeg-Prozess mit Pan-Filter, der wie Musik/Jingle in `buschfunk-mix`
+   schreibt. Von Hand nachstellen: bestehende Links trennen
+   (`pw-link -d "<quelle>:capture_FL" "buschfunk-mix:playback_FL"`, entsprechend FR),
+   dann `ffmpeg -f pulse -i <quelle> -af "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1" -f pulse -device buschfunk-mix "BuschFunk-In-test"`
+   starten - der Mix sollte danach mono aus dieser Quelle bekommen, ohne dass
+   das Rohsignal zusätzlich ankommt. Beim Zurückstellen auf "Stereo" verlinkt
+   die nächste Geräte-Erkennung (alle 3s) automatisch wieder direkt.
 9. **Ausgänge (Monitor/Kopfhörer)**: angeschlossene Wiedergabegeräte (`media.class=Audio/Sink`,
    ausser `buschfunk-mix` selbst) sollten in der Admin-UI in der Live-Spalte
    unter "Angeschlossene Geräte" auftauchen. `pw-link -l` sollte Links von
@@ -55,6 +71,21 @@ echten Pi mit angeschlossenem Mischpult unbedingt durchgehen.
    `pw-link "buschfunk-mix:monitor_FL" "<gerät>:playback_FL"` (und FR). Mute
    funktioniert wie bei Eingängen über `wpctl set-mute <node-id> 1` auf dem
    Ausgabegerät - beeinflusst nicht den Icecast-Stream.
+
+10. **Off-Air-Fade**: Musik starten, dann in der Admin-UI "Sendung beenden"
+    drücken - die Musik sollte über gut eine Sekunde weich leiser werden und
+    dann pausieren (nicht hart abreissen), das Icecast-Signal bleibt stumm
+    stehen statt abzureissen. "Auf Sendung gehen" faded sie in gleicher Zeit
+    wieder ein. War die Musik vorher von Hand pausiert, bleibt sie es.
+
+11. **Master-Limiter**: der Icecast-Stream läuft über `ffmpeg ... -af "alimiter=limit=0.95:attack=5:release=50:level=false" -c:a libmp3lame ...`
+    (`audio/stream.py::_build_ffmpeg_cmd`). Wichtig ist `level=false` - ohne
+    das Flag macht `alimiter` per Default "auto level" (zieht leises Material
+    aktiv Richtung Limit hoch, statt nur Spitzen zu kappen), was hier genau
+    das Falsche wäre. Von Hand pruefen: ein bewusst übersteuertes Testsignal
+    durch dieselbe Filterkette schicken und mit `astats`/rohem PCM nachsehen,
+    dass der Spitzenpegel wirklich nie über ~0.95 kommt, ruhiges Material aber
+    unangetastet bleibt.
 
 ## Bekannte Stolpersteine
 

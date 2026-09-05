@@ -23,9 +23,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 
 from .backend import AudioBackend, DiscoveredBus
+from .levels import LEVEL_FLOOR_DB, db_to_level
 
 logger = logging.getLogger("buschfunk.audio.pipewire")
 
@@ -34,7 +36,13 @@ MIX_MONITOR = f"{MIX_SINK_NAME}.monitor"
 
 LEVEL_INTERVAL = 0.1      # Sekunden zwischen zwei Pegelwerten
 LEVEL_HOLD = 0.6          # ohne neuen Wert nach dieser Zeit auf 0 zurückfallen
-LEVEL_FLOOR_DB = -60.0    # unterhalb davon gilt der Pegel als still
+
+# wpctl kappt eine gewuenschte Lautstaerke standardmaessig bei 100%, egal
+# welcher Zahlenwert uebergeben wird - das "-l" Limit muss mindestens so hoch
+# sein wie der groesste Wert, den die App je schickt, sonst wirkt ein
+# aufgedrehter Kanal-Fader schlicht nicht (genau das war der Bug hinter
+# "auch 150% reicht nicht": es wurde nie mehr als 100% ausgegeben).
+WPCTL_VOLUME_LIMIT = "5.0"
 
 
 async def _run(*args: str, timeout: float = 5.0) -> tuple[int, str, str]:
@@ -56,12 +64,6 @@ async def _run(*args: str, timeout: float = 5.0) -> tuple[int, str, str]:
 async def pipewire_available() -> bool:
     code, _out, _err = await _run("pw-dump", "--no-colors", timeout=3.0)
     return code == 0
-
-
-def _db_to_level(db: float) -> float:
-    if db <= LEVEL_FLOOR_DB:
-        return 0.0
-    return round(max(0.0, min(1.0, (db - LEVEL_FLOOR_DB) / -LEVEL_FLOOR_DB)), 3)
 
 
 class _LevelMonitor:
@@ -133,7 +135,7 @@ class _LevelMonitor:
                         db = float(value)
                     except ValueError:
                         db = LEVEL_FLOOR_DB  # "-inf" bei absoluter Stille
-                    self._level = _db_to_level(db)
+                    self._level = db_to_level(db)
                     self._updated_at = time.monotonic()
                 await self._proc.wait()
             except asyncio.CancelledError:
@@ -144,12 +146,112 @@ class _LevelMonitor:
             await asyncio.sleep(2.0)
 
 
+def _correction_stream_name(device_id: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", device_id)
+    return f"BuschFunk-In-{safe}"
+
+
+_PAN_FILTERS = {
+    # pw-link kann Kanaele nur lauter/leiser oder stumm schalten, nicht neu
+    # mischen - ein Mono-Kanal oder eine nur links belegte Quelle bleibt sonst
+    # eben mono/links. Dafuer braucht es echtes Software-Downmixing per ffmpeg.
+    "mono": "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1",
+    "left": "pan=stereo|c0=c0|c1=c0",
+    "right": "pan=stereo|c0=c1|c1=c1",
+}
+
+
+class _InputCorrection:
+    """Ersetzt bei einer Quelle mit channel_mode != stereo das direkte
+    pw-link-Routing durch einen dauerhaften ffmpeg-Prozess (gleiches Muster
+    wie Musik/Jingle: `-f pulse` rein, Filter, `-f pulse` in den Mix-Sink
+    raus). Der Pegel wird wie bei _LevelMonitor per ametadata mitgelesen."""
+
+    def __init__(self, device_id: str, channel_mode: str) -> None:
+        self.device_id = device_id
+        self.channel_mode = channel_mode
+        self.stream_name = _correction_stream_name(device_id)
+        self._level = 0.0
+        self._updated_at = 0.0
+        self._task: asyncio.Task | None = None
+        self._proc: asyncio.subprocess.Process | None = None
+
+    @property
+    def level(self) -> float:
+        if time.monotonic() - self._updated_at > LEVEL_HOLD:
+            return 0.0
+        return self._level
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        await self._kill_proc()
+
+    async def _kill_proc(self) -> None:
+        proc, self._proc = self._proc, None
+        if proc and proc.returncode is None:
+            proc.terminate()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            if proc.returncode is None:
+                proc.kill()
+
+    def _cmd(self) -> list[str]:
+        samples = int(48000 * LEVEL_INTERVAL)
+        pan = _PAN_FILTERS.get(self.channel_mode, "")
+        filters = [pan, f"asetnsamples=n={samples}:p=0", "astats=metadata=1:reset=1",
+                   "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-"]
+        return [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-f", "pulse", "-i", self.device_id,
+            "-af", ",".join(f for f in filters if f),
+            "-f", "pulse", "-device", MIX_SINK_NAME, self.stream_name,
+        ]
+
+    async def _loop(self) -> None:
+        while True:
+            try:
+                self._proc = await asyncio.create_subprocess_exec(
+                    *self._cmd(),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.DEVNULL,
+                )
+                assert self._proc.stdout is not None
+                async for raw in self._proc.stdout:
+                    line = raw.decode(errors="replace").strip()
+                    if not line.startswith("lavfi.astats.Overall.RMS_level="):
+                        continue
+                    value = line.split("=", 1)[1]
+                    try:
+                        db = float(value)
+                    except ValueError:
+                        db = LEVEL_FLOOR_DB
+                    self._level = db_to_level(db)
+                    self._updated_at = time.monotonic()
+                await self._proc.wait()
+            except asyncio.CancelledError:
+                await self._kill_proc()
+                raise
+            except Exception:
+                logger.debug("Kanalkorrektur für %s abgebrochen", self.device_id, exc_info=True)
+            await asyncio.sleep(2.0)
+
+
 class PipeWireAudioBackend(AudioBackend):
     def __init__(self) -> None:
         self._node_ids: dict[str, str] = {}      # device_id (node.name) -> numerische Node-ID
         self._directions: dict[str, str] = {}    # device_id -> in | out
         self._linked: set[str] = set()           # bereits verkabelte device_ids
         self._monitors: dict[str, _LevelMonitor] = {}
+        self._corrections: dict[str, _InputCorrection] = {}  # device_id -> laufende Kanalkorrektur
         self._master = _LevelMonitor(MIX_MONITOR)
 
     # ---------- Lifecycle ----------
@@ -163,6 +265,9 @@ class PipeWireAudioBackend(AudioBackend):
         for monitor in list(self._monitors.values()):
             await monitor.stop()
         self._monitors.clear()
+        for correction in list(self._corrections.values()):
+            await correction.stop()
+        self._corrections.clear()
 
     async def _ensure_mix_sink(self) -> None:
         nodes = await self._dump_nodes()
@@ -240,6 +345,8 @@ class PipeWireAudioBackend(AudioBackend):
         in_ports = [line.strip() for line in in_ports_raw.splitlines() if line.strip()]
 
         for device_id in new:
+            if device_id in self._corrections:
+                continue  # laeuft ueber die ffmpeg-Kanalkorrektur, nicht per pw-link
             if self._directions.get(device_id) == "in":
                 src_prefix, dst_prefix = f"{device_id}:", f"{MIX_SINK_NAME}:"
             else:
@@ -250,8 +357,34 @@ class PipeWireAudioBackend(AudioBackend):
                 await _run("pw-link", s, d)  # "schon verbunden" ignorieren wir bewusst
             self._linked.add(device_id)
 
+    async def _unlink_input(self, device_id: str) -> None:
+        """Bestehende pw-link-Verbindungen von diesem Eingang in den Mix-Sink
+        kappen - sonst kaeme das unkorrigierte Rohsignal zusaetzlich zur
+        Kanalkorrektur im Mix an."""
+        self._linked.discard(device_id)
+        code, out, _ = await _run("pw-link", "-l")
+        if code != 0:
+            return
+        src_prefix = f"{device_id}:"
+        dst_prefix = f"{MIX_SINK_NAME}:"
+        current_out: str | None = None
+        for raw_line in out.splitlines():
+            if not raw_line.strip():
+                continue
+            if raw_line[0] not in (" ", "\t"):
+                current_out = raw_line.strip()
+                continue
+            line = raw_line.strip()
+            if not line.startswith("|->") and not line.startswith("|<-"):
+                continue
+            target = line[3:].strip()
+            if current_out and current_out.startswith(src_prefix) and target.startswith(dst_prefix):
+                await _run("pw-link", "-d", current_out, target)
+
     def _sync_monitors(self, device_ids: set[str]) -> None:
         for device_id in device_ids:
+            if device_id in self._corrections:
+                continue  # die Kanalkorrektur meldet ihren eigenen Pegel
             if device_id in self._monitors:
                 continue
             # Ein Sink wird über seine ".monitor"-Quelle abgehört, eine Source direkt.
@@ -278,10 +411,32 @@ class PipeWireAudioBackend(AudioBackend):
         if node_id is None:
             logger.warning("set_volume: Gerät %s gerade nicht angeschlossen", device_id)
             return
-        await _run("wpctl", "set-volume", node_id, f"{max(0.0, min(1.5, volume)):.2f}")
+        await _run(
+            "wpctl", "set-volume", "-l", WPCTL_VOLUME_LIMIT, node_id, f"{max(0.0, volume):.2f}"
+        )
+
+    async def set_input_mode(self, device_id: str, channel_mode: str) -> None:
+        existing = self._corrections.get(device_id)
+        if channel_mode == "stereo":
+            if existing is not None:
+                await existing.stop()
+                del self._corrections[device_id]
+                self._linked.discard(device_id)  # naechste Erkennung verlinkt wieder direkt
+            return
+        if existing is not None and existing.channel_mode == channel_mode:
+            return
+        if existing is not None:
+            await existing.stop()
+        await self._unlink_input(device_id)
+        correction = _InputCorrection(device_id, channel_mode)
+        correction.start()
+        self._corrections[device_id] = correction
 
     async def get_levels(self) -> dict[str, float]:
-        return {device_id: m.level for device_id, m in self._monitors.items()}
+        levels = {device_id: m.level for device_id, m in self._monitors.items()}
+        for device_id, correction in self._corrections.items():
+            levels[device_id] = correction.level
+        return levels
 
     async def get_master_level(self) -> float:
         return self._master.level
@@ -298,7 +453,8 @@ class PipeWireAudioBackend(AudioBackend):
             props = node.get("info", {}).get("props", {})
             if props.get("media.name") == stream_name or props.get("node.name") == stream_name:
                 code, _out, _err = await _run(
-                    "wpctl", "set-volume", str(node.get("id")), f"{max(0.0, min(1.5, volume)):.2f}"
+                    "wpctl", "set-volume", "-l", WPCTL_VOLUME_LIMIT,
+                    str(node.get("id")), f"{max(0.0, volume):.2f}"
                 )
                 return code == 0
         return False

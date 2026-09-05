@@ -63,7 +63,10 @@ class Bus(Base):
     display_name: Mapped[str] = mapped_column(default="Neues Geraet")
     direction: Mapped[str] = mapped_column(default="in")  # in (Eingang) | out (Ausgang)
     is_muted: Mapped[bool] = mapped_column(default=True)
-    volume: Mapped[float] = mapped_column(default=1.0)  # 0.0 .. 1.5
+    volume: Mapped[float] = mapped_column(default=1.0)  # 0.0 .. 1.5 (out) / .. 3.0 (in)
+    # Nur fuer Eingaenge relevant: manche Quellen liefern kein sauberes Stereo
+    # (mono Mischpultkanal, nur links belegt). stereo | mono | left | right.
+    channel_mode: Mapped[str] = mapped_column(default="stereo")
     last_seen_active: Mapped[datetime | None] = mapped_column(nullable=True)
 
 

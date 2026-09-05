@@ -27,6 +27,13 @@ PIDFILE = RUNTIME_DIR / "ffmpeg_stream.pid"
 RESPAWN_MIN_INTERVAL = 5.0  # Sekunden - Schutz vor Crash-Loop
 
 
+# level=false ist entscheidend: alimiter macht per Default "auto level" - eine
+# Lautheits-Anhebung, die den Pegel aktiv Richtung Limit hochzieht, statt nur
+# Spitzen zu kappen. Ohne das Flag wuerde der "Limiter" leises Material sogar
+# lauter machen, statt nur vor Uebersteuerung zu schuetzen.
+MASTER_LIMITER = "alimiter=limit=0.95:attack=5:release=50:level=false"
+
+
 def _build_ffmpeg_cmd(source: str) -> list[str]:
     icecast_url = (
         f"icecast://source:{settings.icecast_source_password}"
@@ -41,6 +48,8 @@ def _build_ffmpeg_cmd(source: str) -> list[str]:
         "pulse",
         "-i",
         source,
+        "-af",
+        MASTER_LIMITER,
         "-c:a",
         "libmp3lame",
         "-b:a",

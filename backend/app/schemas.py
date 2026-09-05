@@ -88,6 +88,7 @@ class BusOut(BaseModel):
     direction: str
     is_muted: bool
     volume: float
+    channel_mode: str = "stereo"
     level: float = 0.0
     connected: bool = False
 
@@ -95,6 +96,7 @@ class BusOut(BaseModel):
 class BusUpdate(BaseModel):
     is_muted: bool | None = None
     volume: float | None = None
+    channel_mode: str | None = None
 
 
 class BusRename(BaseModel):

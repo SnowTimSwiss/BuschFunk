@@ -76,6 +76,9 @@
   .player-vol .lbl { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
   .player-vol input[type=range] { flex: 1; min-width: 0; accent-color: var(--live-green); height: 22px; }
   .player-vol .val { font-family: var(--mono); font-size: 11px; color: var(--text-muted); width: 40px; text-align: right; }
+  .chan-meter { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .chan-meter .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--text-faint); white-space: nowrap; }
+  .chan-meter .bar { flex: 1; min-width: 0; height: 8px; }
   .repeat-row { display: flex; align-items: center; gap: 9px; margin-top: 10px; font-size: 12.5px; color: var(--text-muted); }
   .repeat-row input { width: 17px; height: 17px; accent-color: var(--live-green); }
 
@@ -176,6 +179,9 @@
   .mix-vol { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
   .mix-vol input[type=range] { flex: 1; min-width: 0; accent-color: var(--focus); height: 22px; }
   .mix-vol .vval { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); width: 38px; text-align: right; }
+  .mix-chan { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+  .mix-chan .lbl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+  .mix-chan select { flex: 1; min-width: 0; background: var(--panel-raised); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); padding: 6px; font-size: 12px; }
   .mix-badge { font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px; }
   .mix-badge.shut { color: var(--onair); border-color: var(--onair); }
   .mix-empty { color: var(--text-faint); font-size: 12.5px; padding: 10px 0; line-height: 1.5; }
@@ -295,6 +301,7 @@
         <button id="btnNext" title="Nächster Titel">⏭</button>
         <button id="btnStop" title="Musik stoppen und Warteschlange leeren">■</button>
       </div>
+      <div class="chan-meter"><span class="lbl">PEGEL</span><div class="bar" id="playerBar"><div class="mask"></div><div class="peak"></div></div></div>
       <div class="player-vol">
         <span class="lbl">MUSIK</span>
         <input type="range" id="musicVol" min="0" max="150" step="1" value="100">
@@ -575,6 +582,9 @@
       const bar = document.querySelector('.mix-meter[data-bus="' + busId + '"]');
       if (bar) paintBar(bar, level, 'bus' + busId);
     });
+    paintBar($('playerBar'), msg.player_level, 'player');
+    const jingleBar = $('jingleBar');
+    if (jingleBar) paintBar(jingleBar, msg.jingle_level, 'jingle');
     if (live && live.player) {
       live.player.position = msg.position;
       live.player.playing = msg.playing;
@@ -588,7 +598,7 @@
     $('masterVal').textContent = db === null ? 'still' : db + ' dB';
     const hint = $('masterHint');
     if (level < 0.02) { hint.textContent = 'Es geht gerade kein Ton raus.'; hint.classList.add('warn'); }
-    else if (level > 0.93) { hint.textContent = 'Zu laut – runterziehen, sonst verzerrt es.'; hint.classList.add('warn'); }
+    else if (level > 0.93) { hint.textContent = 'Zu laut – runterziehen, der Limiter fängt nur das Gröbste ab.'; hint.classList.add('warn'); }
     else { hint.textContent = 'Pegel ist im grünen Bereich.'; hint.classList.remove('warn'); }
   }
 
@@ -603,7 +613,7 @@
     const mics = (live ? live.buses.filter((b) => b.direction === 'in' && b.connected) : []).length;
     $('onairNote').textContent = on
       ? 'Die Mikrofone sind offen – alles, was am Pult passiert, geht raus.'
-      : (mics ? 'Mikrofone sind zu. Musik läuft trotzdem weiter.' : 'Noch kein Mikrofon/Mischpult angeschlossen.');
+      : (mics ? 'Mikrofone sind zu, Musik ist pausiert.' : 'Noch kein Mikrofon/Mischpult angeschlossen.');
     const lb = $('lbAir');
     lb.classList.toggle('on', on);
     lb.textContent = on ? 'ON AIR' : 'AUF SENDUNG';
@@ -752,7 +762,9 @@
     const state = (live && live.jingle) || { playing: false };
     if (state.playing) {
       if (!running.firstChild) {
-        running.innerHTML = '<div class="jingle-running"><span class="n"></span><button>■ Stopp</button></div>';
+        running.innerHTML =
+          '<div class="jingle-running"><span class="n"></span><button>■ Stopp</button></div>' +
+          '<div class="chan-meter"><span class="lbl">PEGEL</span><div class="bar" id="jingleBar"><div class="mask"></div><div class="peak"></div></div></div>';
         running.querySelector('button').addEventListener('click', () => api('/api/player/jingle/stop', { method: 'POST' }).catch(fail));
       }
       running.querySelector('.n').textContent = '▶ ' + (state.title || 'Jingle') + ' läuft';
@@ -1046,7 +1058,13 @@
         '<button class="mute-btn"></button>' +
       '</div>' +
       '<div class="bar mix-meter" data-bus="' + bus.id + '"><div class="mask"></div><div class="peak"></div></div>' +
-      '<div class="mix-vol"><input type="range" min="0" max="150" step="1"><span class="vval"></span></div>';
+      '<div class="mix-vol"><input type="range" min="0" max="150" step="1"><span class="vval"></span></div>' +
+      '<div class="mix-chan"><span class="lbl">KANAL</span><select>' +
+        '<option value="stereo">Stereo</option>' +
+        '<option value="mono">Mono (L+R gemischt)</option>' +
+        '<option value="left">Nur links → beide</option>' +
+        '<option value="right">Nur rechts → beide</option>' +
+      '</select></div>';
 
     row.querySelector('.mix-name').addEventListener('click', async () => {
       const b = row.__bus;
@@ -1072,6 +1090,11 @@
         api('/api/buses/' + b.id, { method: 'PATCH', body: { volume: b.volume } }).catch(fail);
       }, 120);
     });
+    row.querySelector('.mix-chan select').addEventListener('change', (e) => {
+      const b = row.__bus;
+      b.channel_mode = e.target.value;
+      api('/api/buses/' + b.id, { method: 'PATCH', body: { channel_mode: b.channel_mode } }).catch(fail);
+    });
     return row;
   }
 
@@ -1085,11 +1108,20 @@
     muteBtn.textContent = bus.is_muted ? 'STUMM' : 'AN';
     muteBtn.classList.toggle('on', !bus.is_muted);
     muteBtn.classList.toggle('off', bus.is_muted);
+    // Eingaenge duerfen staerker aufgedreht werden als Monitor-Ausgaenge -
+    // manche Mischpultkanaele sind selbst bei 150% noch zu leise.
     const slider = row.querySelector('input[type=range]');
+    const ceiling = bus.direction === 'in' ? 300 : 150;
+    if (Number(slider.max) !== ceiling) slider.max = String(ceiling);
     if (document.activeElement !== slider) {
       slider.value = Math.round((bus.volume == null ? 1 : bus.volume) * 100);
       row.querySelector('.vval').textContent = slider.value + '%';
     }
+    // Kanalkorrektur (mono/links/rechts) ergibt nur bei Eingaengen Sinn.
+    const chanRow = row.querySelector('.mix-chan');
+    chanRow.hidden = bus.direction !== 'in';
+    const chanSelect = chanRow.querySelector('select');
+    if (document.activeElement !== chanSelect) chanSelect.value = bus.channel_mode || 'stereo';
   }
 
   const busRows = new Map();

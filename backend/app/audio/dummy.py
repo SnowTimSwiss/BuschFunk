@@ -27,6 +27,9 @@ class DummyAudioBackend(AudioBackend):
     async def set_volume(self, device_id: str, volume: float) -> None:
         pass
 
+    async def set_input_mode(self, device_id: str, channel_mode: str) -> None:
+        pass
+
     async def get_levels(self) -> dict[str, float]:
         return {}
 

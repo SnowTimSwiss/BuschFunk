@@ -25,6 +25,7 @@ _DROP_TABLES = ["segments", "shows", "schedule_entries"]
 # fehlende Spalten; ohne das hier wuerde ein Update auf einem laufenden Pi crashen.
 _ADD_COLUMNS = [
     ("buses", "volume", "REAL NOT NULL DEFAULT 1.0"),
+    ("buses", "channel_mode", "TEXT NOT NULL DEFAULT 'stereo'"),
 ]
 
 

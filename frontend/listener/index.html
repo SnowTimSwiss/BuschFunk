@@ -221,7 +221,7 @@
       try { state = JSON.parse(ev.data); } catch (e) { return; }
       if (state.type !== 'live_state') return;
       const player = state.player || {};
-      const music = player.playing ? player.title : null;
+      const music = (player.playing && !player.paused) ? player.title : null;
       currentTitle = music;
       $('nowTitle').textContent = music || (state.on_air ? 'Live aus dem Lager' : 'BuschFunk');
       $('onairFlag').hidden = !state.on_air;

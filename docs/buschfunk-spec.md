@@ -79,7 +79,7 @@ AdminUser
 
 Eine einzige Seite, kein Modus-Wechsel: links das, was gerade passiert, rechts das Mischpult.
 
-**Player:** Titel, Fortschrittsbalken, Start/Pause, Zurück/Weiter, Stopp, eigener Lautstärkeregler für die Musik und ein "endlos wiederholen"-Schalter (per Default an – Sendepausen sind der Feind). Darunter "Als nächstes" mit den kommenden Titeln; ein Klick springt hin, das ✕ nimmt einen Titel wieder raus.
+**Player:** Titel, Fortschrittsbalken, Live-Pegel der Musik, Start/Pause, Zurück/Weiter, Stopp, eigener Lautstärkeregler für die Musik und ein "endlos wiederholen"-Schalter (per Default an – Sendepausen sind der Feind). Start/Pause faded weich statt hart abzuschneiden. Darunter "Als nächstes" mit den kommenden Titeln; ein Klick springt hin, das ✕ nimmt einen Titel wieder raus.
 
 **Jingle-Board:** alle als Jingle markierten Titel als grosse Knöpfe. Ein Tipp spielt sie **über** die laufende Musik, ohne sie zu stoppen.
 
@@ -87,11 +87,11 @@ Eine einzige Seite, kein Modus-Wechsel: links das, was gerade passiert, rechts d
 
 **Playlists:** anlegen, umbenennen, löschen; Titel aus der Mediathek hinzufügen, umsortieren, entfernen. Eine Playlist lässt sich der Reihe nach starten, zufällig starten oder an die laufende Warteschlange anhängen.
 
-**Auf Sendung:** ein grosser Schalter. "Auf Sendung" heisst: die Mikrofone gehen auf. Off Air schliesst alle Eingänge auf einmal, ohne die einzeln gesetzten Mute-Schalter zu überschreiben – die Musik läuft dabei weiter, der Stream reisst nie ab. Monitor-Ausgänge bleiben unberührt, im Regieraum hört man weiter mit.
+**Auf Sendung:** ein grosser Schalter. "Auf Sendung" heisst: die Mikrofone gehen auf UND die Musik faded ein. Off Air schliesst alle Eingänge auf einmal, ohne die einzeln gesetzten Mute-Schalter zu überschreiben, faded die Musik weich aus und pausiert sie, und bricht einen laufenden Jingle ab – der Icecast-Stream selbst reisst nie ab, es kommt nur still an. Eine von Hand pausierte Musik bleibt beim nächsten "Auf Sendung" pausiert, statt von selbst wieder anzuspringen. Monitor-Ausgänge bleiben unberührt, im Regieraum hört man weiter mit.
 
-**Mischpult-Ansicht:** aufgelistet wird nur, was tatsächlich am Pi hängt – keine Platzhalter, keine Default-Ausgänge. Je Gerät: Live-Pegel mit Peak-Hold, Lautstärkeregler (`wpctl set-volume`) und ein Stumm/An-Schalter. Geräte, die mal dran waren und gerade fehlen, stehen zusammengeklappt darunter und lassen sich vergessen.
+**Mischpult-Ansicht:** aufgelistet wird nur, was tatsächlich am Pi hängt – keine Platzhalter, keine Default-Ausgänge. Je Gerät: Live-Pegel mit Peak-Hold, Lautstärkeregler (`wpctl set-volume`, Eingänge bis 300%, Ausgänge bis 150%) und ein Stumm/An-Schalter. Bei Eingängen zusätzlich ein Kanal-Modus (Stereo/Mono/Nur links/Nur rechts) für Quellen, die nicht sauber Stereo liefern (z.B. ein Mono-Kanal am Mischpult oder ein Kabel, das nur links belegt). Geräte, die mal dran waren und gerade fehlen, stehen zusammengeklappt darunter und lassen sich vergessen.
 
-**Master-Meter:** grosser Pegel des fertigen Mixes ("das geht raus") mit Klartext-Hinweis, ob gerade gar nichts rausgeht oder übersteuert wird.
+**Master-Meter:** grosser Pegel des fertigen Mixes ("das geht raus") mit Klartext-Hinweis, ob gerade gar nichts rausgeht oder übersteuert wird. Der Icecast-Stream selbst hat zusätzlich einen Limiter (`alimiter`, Deckel bei 95%) - schützt vor hartem Clipping/Verzerren bei Aussetzern am Pult, ersetzt aber nicht vernünftig eingepegelte Kanäle.
 
 **Immer erreichbar:** auf schmalen Bildschirmen liegt eine feste Leiste am unteren Rand mit dem Sendungs-Schalter und Zurück/Pause/Weiter – off air gehen ist immer einen Tipp entfernt, ohne zu scrollen. Alle Aktionen schalten die UI sofort um und lassen den Server nachziehen, statt auf die Antwort zu warten. Die Leertaste ist Start/Pause.
 
@@ -146,6 +146,7 @@ Die Regie abonniert die Meter, Hörer-Handys nicht – im Lager-WLAN soll nieman
 ## 11. Offene Punkte für spätere Iterationen
 
 - Pegelmessung, Wiedergabe und Lautstärkeregelung laufen über `ffmpeg` bzw. `wpctl` – auf echter Hardware verifizieren (siehe `docs/audio-setup.md`).
+- Der Kanal-Modus (Mono/Links/Rechts) ersetzt bei aktiven Eingängen das direkte `pw-link`-Routing durch einen eigenen ffmpeg-Prozess mit Pan-Filter; das Auftrennen/Neuverkabeln der bestehenden Links (`pw-link -d`) ist noch nicht gegen einen echten PipeWire-Server verifiziert (siehe `docs/audio-setup.md`, Abschnitt Kanalkorrektur).
 - Feingranulare Rechte (falls später mehr als eine Person parallel Admin-Zugriff braucht) – aktuell reicht ein einzelner Admin-Account.
 - Ein Software-Update beendet die laufende Musik (der Icecast-Stream selbst läuft weiter). Für ein unterbrechungsfreies Update müsste der Wiedergabe-Prozess über den Neustart hinweg adoptiert werden.
 

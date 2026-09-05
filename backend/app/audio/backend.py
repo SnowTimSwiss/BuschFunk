@@ -46,7 +46,13 @@ class AudioBackend(ABC):
 
     @abstractmethod
     async def set_volume(self, device_id: str, volume: float) -> None:
-        """0.0 (aus) .. 1.0 (Normalpegel) .. 1.5 (aufgedreht)."""
+        """0.0 (aus) .. 1.0 (Normalpegel) .. je nach Richtung weiter aufgedreht."""
+
+    @abstractmethod
+    async def set_input_mode(self, device_id: str, channel_mode: str) -> None:
+        """Nur fuer Eingaenge: stereo | mono | left | right. Ein reiner
+        Pegel-Regler kann Kanaele nicht neu mischen, deshalb ein eigener
+        Signalweg fuer alles ausser "stereo"."""
 
     @abstractmethod
     async def get_levels(self) -> dict[str, float]:

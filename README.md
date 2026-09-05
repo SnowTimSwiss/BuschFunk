@@ -18,8 +18,9 @@ Lagerradio nicht. Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.m
   Lautstärkeregler (Eingänge bis 300%), Stumm-Schalter und bei Eingängen einem
   Kanal-Modus (Stereo/Mono/Nur links/Nur rechts) für Quellen, die nicht sauber
   Stereo liefern, dazu ein Master-Meter.
-- **Auf Sendung:** ein Schalter öffnet alle Mikrofone und faded die Musik ein;
-  off air faded sie weich aus und pausiert, der Icecast-Stream reisst nie ab.
+- **Auf Sendung:** ein Schalter gibt den gemeinsamen Master-Ausgang frei;
+  off air stoppt nur diese Ausgabe. Einzelne Geräte und der Player bleiben
+  unverändert.
 - **Limiter:** der Stream selbst hat einen Deckel bei 95% - schützt vor hartem
   Verzerren, wenn am Pult mal jemand zu heiss reingeht.
 

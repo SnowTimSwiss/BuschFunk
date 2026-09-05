@@ -15,19 +15,17 @@ def get_or_create_live_state(db: Session) -> LiveState:
     return state
 
 
-async def apply_bus_state(bus: Bus, on_air: bool) -> None:
+async def apply_bus_state(bus: Bus) -> None:
     """Mute und Lautstaerke auf das Geraet legen.
 
-    Eingaenge sind zusaetzlich stumm, solange nicht auf Sendung ist - "off air"
-    schliesst also alle Mikrofone auf einmal, ohne die einzeln gesetzten
-    Mute-Schalter zu ueberschreiben. Ausgaenge (Monitor-Lautsprecher) bleiben
-    davon unberuehrt, im Regieraum soll man weiter mithoeren koennen.
+    Der Sendungszustand wird bewusst nicht auf einzelne Geraete angewendet.
+    Off-Air schaltet stattdessen den gemeinsamen Master-Ausgang; so bleiben
+    die persoenlichen Mute-Schalter und Lautstaerken aller Geraete unveraendert.
     """
     backend = runtime.audio_backend
     if backend is None:
         return
-    muted = bus.is_muted or (bus.direction == "in" and not on_air)
-    await backend.set_mute(bus.device_id, muted)
+    await backend.set_mute(bus.device_id, bus.is_muted)
     await backend.set_volume(bus.device_id, bus.volume)
     if bus.direction == "in":
         # idempotent - legt/entfernt die Kanalkorrektur nur bei tatsaechlicher
@@ -37,26 +35,19 @@ async def apply_bus_state(bus: Bus, on_air: bool) -> None:
 
 
 async def apply_all_buses(db: Session) -> None:
-    on_air = get_or_create_live_state(db).on_air
     for bus in db.query(Bus).all():
         if bus.device_id in runtime.last_seen_device_ids:
-            await apply_bus_state(bus, on_air)
+            await apply_bus_state(bus)
 
 
 async def apply_on_air_transition(db: Session, on_air: bool) -> None:
-    """Mikrofone schalten UND die Musik mitnehmen: "off air" soll wirklich
-    still sein, nicht nur die Mikros zumachen - sonst laeuft die Musik einfach
-    unbeirrt weiter, obwohl gerade niemand auf Sendung ist. Ein Jingle, der
-    gerade laeuft, wird abgebrochen; die Musik faded weich aus und wieder ein,
-    ausser sie war schon von Hand pausiert."""
-    await apply_all_buses(db)
-    if runtime.player is not None:
-        if on_air:
-            await runtime.player.resume_from_off_air()
-        else:
-            await runtime.player.pause_for_off_air()
-    if runtime.jingles is not None and not on_air:
-        await runtime.jingles.fade_stop()
+    """Die komplette gemischte Ausgabe am Master stoppen oder freigeben.
+
+    Quellen, Einzel-Mutes, Musik und Jingles laufen unveraendert weiter. Beim
+    Umschalten kommt deshalb genau der aktuelle Mix wieder aus dem Master.
+    """
+    if runtime.audio_backend is not None:
+        await runtime.audio_backend.set_master_mute(not on_air)
 
 
 async def _levels() -> tuple[dict[str, float], float]:

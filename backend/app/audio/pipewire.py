@@ -249,6 +249,7 @@ class PipeWireAudioBackend(AudioBackend):
     def __init__(self) -> None:
         self._node_ids: dict[str, str] = {}      # device_id (node.name) -> numerische Node-ID
         self._directions: dict[str, str] = {}    # device_id -> in | out
+        self._master_node_id: str | None = None
         self._linked: set[str] = set()           # bereits verkabelte device_ids
         self._monitors: dict[str, _LevelMonitor] = {}
         self._corrections: dict[str, _InputCorrection] = {}  # device_id -> laufende Kanalkorrektur
@@ -272,6 +273,7 @@ class PipeWireAudioBackend(AudioBackend):
     async def _ensure_mix_sink(self) -> None:
         nodes = await self._dump_nodes()
         if any(self._node_name(n) == MIX_SINK_NAME for n in nodes):
+            self._remember_master_node(nodes)
             return
         await _run(
             "pw-cli", "create-node", "adapter",
@@ -279,6 +281,15 @@ class PipeWireAudioBackend(AudioBackend):
             f"node.name={MIX_SINK_NAME} media.class=Audio/Sink "
             "audio.position=[FL,FR] object.linger=true }",
         )
+        self._remember_master_node(await self._dump_nodes())
+
+    # ---------- Master-Ausgabe ----------
+
+    def _remember_master_node(self, nodes: list[dict]) -> None:
+        for node in nodes:
+            if self._node_name(node) == MIX_SINK_NAME:
+                self._master_node_id = str(node.get("id"))
+                return
 
     # ---------- Geräte-Erkennung ----------
 
@@ -300,6 +311,7 @@ class PipeWireAudioBackend(AudioBackend):
 
     async def discover_buses(self) -> list[DiscoveredBus]:
         nodes = await self._dump_nodes()
+        self._remember_master_node(nodes)
         buses: list[DiscoveredBus] = []
         seen: set[str] = set()
 
@@ -405,6 +417,19 @@ class PipeWireAudioBackend(AudioBackend):
             logger.warning("set_mute: Gerät %s gerade nicht angeschlossen", device_id)
             return
         await _run("wpctl", "set-mute", node_id, "1" if muted else "0")
+
+    async def set_master_mute(self, muted: bool) -> None:
+        """Die komplette Ausgabe am gemeinsamen Mix-Sink schalten.
+
+        Der Mix und alle Quellen bleiben aktiv. Dadurch wird weder ein
+        Einzelgeraet veraendert noch die laufende Musik pausiert.
+        """
+        if self._master_node_id is None:
+            self._remember_master_node(await self._dump_nodes())
+        if self._master_node_id is None:
+            logger.warning("set_master_mute: Mix-Sink %s nicht gefunden", MIX_SINK_NAME)
+            return
+        await _run("wpctl", "set-mute", self._master_node_id, "1" if muted else "0")
 
     async def set_volume(self, device_id: str, volume: float) -> None:
         node_id = self._node_ids.get(device_id)

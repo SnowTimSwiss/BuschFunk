@@ -45,6 +45,14 @@ class AudioBackend(ABC):
         ...
 
     @abstractmethod
+    async def set_master_mute(self, muted: bool) -> None:
+        """Die komplette gemischte Ausgabe zentral stoppen oder freigeben.
+
+        Einzelne Quellen und Ausgaengeraete bleiben dabei unveraendert.
+        """
+        ...
+
+    @abstractmethod
     async def set_volume(self, device_id: str, volume: float) -> None:
         """0.0 (aus) .. 1.0 (Normalpegel) .. je nach Richtung weiter aufgedreht."""
 

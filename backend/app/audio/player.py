@@ -8,16 +8,9 @@ Zwei unabhaengige Kanaele, die beide in denselben PipeWire-Sink schreiben:
 * **Jingles** - ein Knopfdruck, spielt *ueber* die Musik. PipeWire summiert
   beide Streams im Mix-Sink, deshalb muss dafuer nichts gestoppt werden.
 
-Pause laeuft ueber SIGSTOP/SIGCONT auf dem ffmpeg-Prozess. Das funktioniert
-sauber, weil ffmpeg ohne "-re" vom Ausgabegeraet getaktet wird: steht der
-Prozess, laeuft nichts nach - und nach dem Fortsetzen gibt es keinen
-Schnellvorlauf, um die Pause "aufzuholen".
+Pause laeuft weiterhin ueber SIGSTOP/SIGCONT auf dem ffmpeg-Prozess und gilt nur fuer den manuellen Player-Knopf.
 
-Fade in/out ist eine reine Lautstaerke-Rampe auf dem PipeWire-Stream-Node
-(`wpctl set-volume`, in kleinen Schritten) - erst wenn sie bei 0 angekommen
-ist, kommt SIGSTOP; beim Fortsetzen erst SIGCONT, dann die Rampe zurueck nach
-oben. Dieselbe Rampe federt auch "off air" ab: Mikros gehen sofort zu, Musik
-faded weich raus statt hart abzureissen.
+Fade in/out bleibt eine reine Lautstaerke-Rampe auf dem PipeWire-Stream-Node (`wpctl set-volume`, in kleinen Schritten). Off-Air greift diese Player-Steuerung nicht an: Der gemeinsame Master-Ausgang wird zentral geschaltet.
 
 Pegel fuer die Meter-Anzeige kommen ueber denselben ametadata-Trick wie beim
 Mischpult (siehe pipewire.py), nur direkt im Wiedergabe-ffmpeg mitgemessen -
@@ -199,7 +192,6 @@ class MusicPlayer(_Channel):
         self.repeat = True
         self.volume = 1.0
         self.paused = False
-        self._auto_paused = False   # Pause kam von "off air", nicht vom Knopf
         self._task: asyncio.Task | None = None
         self._playing = False
         self._started_at = 0.0
@@ -306,28 +298,14 @@ class MusicPlayer(_Channel):
         if self.paused:
             await self._resume_now()
         else:
-            await self._pause_now(auto=False)
+            await self._pause_now()
 
-    async def pause_for_off_air(self) -> None:
-        """Off air: Musik weich ausblenden und pausieren, damit wirklich
-        nichts mehr rausgeht - ausser sie war schon von Hand pausiert, dann
-        bleibt das so, wie es ist."""
-        await self._pause_now(auto=True)
-
-    async def resume_from_off_air(self) -> None:
-        """Nur fortsetzen, wenn "off air" ueberhaupt der Grund fuer die Pause
-        war - eine von Hand pausierte Musik soll beim Auf-Sendung-Gehen nicht
-        von selbst wieder anspringen."""
-        if self._auto_paused:
-            await self._resume_now()
-
-    async def _pause_now(self, auto: bool) -> None:
+    async def _pause_now(self) -> None:
         if not self._playing or self.paused:
             return
         await self._ramp_volume(0.0)
         self._paused_at = time.monotonic()
         self.paused = True
-        self._auto_paused = auto
         self._signal(signal.SIGSTOP)
 
     async def _resume_now(self) -> None:
@@ -335,7 +313,6 @@ class MusicPlayer(_Channel):
             return
         self._paused_total += time.monotonic() - self._paused_at
         self.paused = False
-        self._auto_paused = False
         self._signal(signal.SIGCONT)
         self._volume_task = asyncio.create_task(self._ramp_volume(self.volume))
 
@@ -394,7 +371,6 @@ class MusicPlayer(_Channel):
         await self._kill()
         self._playing = False
         self.paused = False
-        self._auto_paused = False
 
     async def _run(self) -> None:
         failures = 0
@@ -427,7 +403,6 @@ class MusicPlayer(_Channel):
         finally:
             self._playing = False
             self.paused = False
-            self._auto_paused = False
 
     async def _play_entry(self, entry: QueueEntry) -> bool:
         self._playing = True
@@ -495,14 +470,6 @@ class JinglePlayer(_Channel):
                 await task
         await self._kill()
         self._title = None
-
-    async def fade_stop(self) -> None:
-        """Weich statt hart abbrechen - z.B. wenn man off air geht, waehrend
-        gerade ein Jingle laeuft."""
-        if self._task is None:
-            return
-        await self._ramp_volume(0.0)
-        await self.stop()
 
     async def _run(self, path: str, duration: float) -> None:
         try:

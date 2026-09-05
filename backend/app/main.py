@@ -54,7 +54,6 @@ async def _discover_buses_loop() -> None:
 
                 db = SessionLocal()
                 try:
-                    on_air = get_or_create_live_state(db).on_air
                     existing = {b.device_id: b for b in db.query(Bus).all()}
                     for found in discovered:
                         bus = existing.get(found.device_id)
@@ -72,7 +71,7 @@ async def _discover_buses_loop() -> None:
                         # Ein frisch eingestecktes Geraet soll sofort wieder so
                         # klingen wie vorher - Name, Mute und Pegel sind gespeichert.
                         if found.device_id not in known_connected:
-                            await apply_bus_state(bus, on_air)
+                            await apply_bus_state(bus)
                     db.commit()
                 finally:
                     db.close()
@@ -117,6 +116,12 @@ async def lifespan(app: FastAPI):
     runtime.jingles = JinglePlayer()
     runtime.jingles.configure(runtime.audio_backend)
     await stream_manager.start(runtime.audio_backend)
+    db = SessionLocal()
+    try:
+        # Off-Air ist ein zentraler Master-Zustand, kein Einzel-Mute der Busse.
+        await runtime.audio_backend.set_master_mute(not get_or_create_live_state(db).on_air)
+    finally:
+        db.close()
 
     tasks = [
         asyncio.create_task(_discover_buses_loop()),

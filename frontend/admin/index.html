@@ -613,7 +613,7 @@
     const mics = (live ? live.buses.filter((b) => b.direction === 'in' && b.connected) : []).length;
     $('onairNote').textContent = on
       ? 'Die Mikrofone sind offen – alles, was am Pult passiert, geht raus.'
-      : (mics ? 'Mikrofone sind zu, Musik ist pausiert.' : 'Noch kein Mikrofon/Mischpult angeschlossen.');
+      : (mics ? "Master-Ausgabe ist gestoppt – Quellen und Player laufen weiter." : "Master-Ausgabe ist gestoppt.");
     const lb = $('lbAir');
     lb.classList.toggle('on', on);
     lb.textContent = on ? 'ON AIR' : 'AUF SENDUNG';
@@ -1101,9 +1101,8 @@
   function updateBusRow(row, bus) {
     row.querySelector('.mix-name').textContent = bus.display_name;
     const badge = row.querySelector('.mix-badge');
-    const shutByAir = bus.direction === 'in' && !(live && live.on_air);
-    badge.textContent = bus.direction === 'out' ? 'Ausgang' : (shutByAir ? 'off air' : 'Eingang');
-    badge.classList.toggle('shut', shutByAir);
+    badge.textContent = bus.direction === 'out' ? 'Ausgang' : 'Eingang';
+    badge.classList.remove('shut');
     const muteBtn = row.querySelector('.mute-btn');
     muteBtn.textContent = bus.is_muted ? 'STUMM' : 'AN';
     muteBtn.classList.toggle('on', !bus.is_muted);

@@ -72,11 +72,7 @@ echten Pi mit angeschlossenem Mischpult unbedingt durchgehen.
    funktioniert wie bei Eingängen über `wpctl set-mute <node-id> 1` auf dem
    Ausgabegerät - beeinflusst nicht den Icecast-Stream.
 
-10. **Off-Air-Fade**: Musik starten, dann in der Admin-UI "Sendung beenden"
-    drücken - die Musik sollte über gut eine Sekunde weich leiser werden und
-    dann pausieren (nicht hart abreissen), das Icecast-Signal bleibt stumm
-    stehen statt abzureissen. "Auf Sendung gehen" faded sie in gleicher Zeit
-    wieder ein. War die Musik vorher von Hand pausiert, bleibt sie es.
+10. **Master-Off-Air**: beliebige Quellen und Musik starten, dann in der Admin-UI "Sendung beenden" drücken - der gemeinsame Mix-Sink wird zentral stumm geschaltet. Einzelne Geräte werden dabei nicht gemutet und die Musik pausiert nicht. "Auf Sendung gehen" gibt den Master-Sink wieder frei.
 
 11. **Master-Limiter**: der Icecast-Stream läuft über `ffmpeg ... -af "alimiter=limit=0.95:attack=5:release=50:level=false" -c:a libmp3lame ...`
     (`audio/stream.py::_build_ffmpeg_cmd`). Wichtig ist `level=false` - ohne

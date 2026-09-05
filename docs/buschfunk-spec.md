@@ -13,7 +13,7 @@ Lagerradio für das Regiolager 27. Läuft auf einem Raspberry Pi (oder beliebige
 
 ## 2. Architektur-Überblick
 
-**Kernidee des Audio-Signalwegs:** Alle Quellen speisen dauerhaft in einen PipeWire-Loopback-Bus (`buschfunk-mix`) ein – das angeschlossene Mischpult, weitere USB-Audiogeräte, und dazu die beiden internen Wiedergabe-Kanäle (Musik und Jingles). Jede Quelle ist einzeln stumm-/lautschaltbar. Genau **ein** ffmpeg-Prozess liest diesen Loopback dauerhaft aus und streamt an Icecast – dadurch ist "auf Sendung / nicht auf Sendung" nur Mute/Unmute im Hintergrund, nie ein Stream-Reconnect (kein Klick, kein Aussetzer).
+**Kernidee des Audio-Signalwegs:** Alle Quellen speisen dauerhaft in einen PipeWire-Loopback-Bus (`buschfunk-mix`) ein – das angeschlossene Mischpult, weitere USB-Audiogeräte, und dazu die beiden internen Wiedergabe-Kanäle (Musik und Jingles). Jede Quelle ist einzeln stumm-/lautschaltbar. Genau **ein** ffmpeg-Prozess liest diesen Loopback dauerhaft aus und streamt an Icecast. Auf Sendung/off air wird ausschließlich der gemeinsame Master-Ausgang des Loopbacks freigegeben bzw. gestoppt; Quellen, Einzel-Mutes und Player laufen unverändert weiter.
 
 Musik und Jingles sind **zwei getrennte Streams in denselben Sink**: PipeWire summiert sie, deshalb kann ein Jingle über die laufende Musik gelegt werden, ohne irgendetwas zu stoppen.
 
@@ -87,7 +87,7 @@ Eine einzige Seite, kein Modus-Wechsel: links das, was gerade passiert, rechts d
 
 **Playlists:** anlegen, umbenennen, löschen; Titel aus der Mediathek hinzufügen, umsortieren, entfernen. Eine Playlist lässt sich der Reihe nach starten, zufällig starten oder an die laufende Warteschlange anhängen.
 
-**Auf Sendung:** ein grosser Schalter. "Auf Sendung" heisst: die Mikrofone gehen auf UND die Musik faded ein. Off Air schliesst alle Eingänge auf einmal, ohne die einzeln gesetzten Mute-Schalter zu überschreiben, faded die Musik weich aus und pausiert sie, und bricht einen laufenden Jingle ab – der Icecast-Stream selbst reisst nie ab, es kommt nur still an. Eine von Hand pausierte Musik bleibt beim nächsten "Auf Sendung" pausiert, statt von selbst wieder anzuspringen. Monitor-Ausgänge bleiben unberührt, im Regieraum hört man weiter mit.
+**Auf Sendung:** ein grosser Schalter. "Auf Sendung" gibt den gemeinsamen Master-Ausgang frei, off air stoppt ihn wieder. Eingänge, Einzel-Mutes, Musik und Jingles bleiben unverändert; Monitor-Ausgänge sowie der Icecast-Ausgang erhalten beim Freigeben denselben aktuellen Mix.
 
 **Mischpult-Ansicht:** aufgelistet wird nur, was tatsächlich am Pi hängt – keine Platzhalter, keine Default-Ausgänge. Je Gerät: Live-Pegel mit Peak-Hold, Lautstärkeregler (`wpctl set-volume`, Eingänge bis 300%, Ausgänge bis 150%) und ein Stumm/An-Schalter. Bei Eingängen zusätzlich ein Kanal-Modus (Stereo/Mono/Nur links/Nur rechts) für Quellen, die nicht sauber Stereo liefern (z.B. ein Mono-Kanal am Mischpult oder ein Kabel, das nur links belegt). Geräte, die mal dran waren und gerade fehlen, stehen zusammengeklappt darunter und lassen sich vergessen.
 

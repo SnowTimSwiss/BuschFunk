@@ -24,6 +24,9 @@ class DummyAudioBackend(AudioBackend):
     async def set_mute(self, device_id: str, muted: bool) -> None:
         pass
 
+    async def set_master_mute(self, muted: bool) -> None:
+        pass
+
     async def set_volume(self, device_id: str, volume: float) -> None:
         pass
 
@@ -57,12 +60,16 @@ class DemoAudioBackend(DummyAudioBackend):
     def __init__(self) -> None:
         self._muted: dict[str, bool] = {b.device_id: True for b in DEMO_BUSES}
         self._volume: dict[str, float] = {b.device_id: 1.0 for b in DEMO_BUSES}
+        self._master_muted = True
 
     async def discover_buses(self) -> list[DiscoveredBus]:
         return list(DEMO_BUSES)
 
     async def set_mute(self, device_id: str, muted: bool) -> None:
         self._muted[device_id] = muted
+
+    async def set_master_mute(self, muted: bool) -> None:
+        self._master_muted = muted
 
     async def set_volume(self, device_id: str, volume: float) -> None:
         self._volume[device_id] = volume
@@ -75,6 +82,8 @@ class DemoAudioBackend(DummyAudioBackend):
         return levels
 
     async def get_master_level(self) -> float:
+        if self._master_muted:
+            return 0.0
         from .. import runtime
 
         ins = [

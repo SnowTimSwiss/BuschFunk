@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .. import runtime
 from ..auth import require_admin
 from ..db import get_db
-from ..live_state import apply_bus_state, broadcast_live_state, get_or_create_live_state
+from ..live_state import apply_bus_state, broadcast_live_state
 from ..models import Bus
 from ..schemas import BusRename, BusUpdate
 
@@ -56,7 +56,7 @@ async def update_bus(bus_id: int, body: BusUpdate, db: Session = Depends(get_db)
         channel_mode_changed = body.channel_mode != bus.channel_mode
         bus.channel_mode = body.channel_mode
     db.commit()
-    await apply_bus_state(bus, get_or_create_live_state(db).on_air)
+    await apply_bus_state(bus)
     if channel_mode_changed and runtime.audio_backend is not None:
         await runtime.audio_backend.set_input_mode(bus.device_id, bus.channel_mode)
     await broadcast_live_state(db)

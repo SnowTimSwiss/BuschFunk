@@ -17,10 +17,8 @@ async def status(db: Session = Depends(get_db)):
 
 @router.post("/on-air")
 async def set_on_air(body: OnAirRequest, db: Session = Depends(get_db)):
-    """Auf Sendung gehen heisst: Mikrofone gehen auf UND die Musik faded
-    wieder ein. Off air schliesst die Mikrofone und faded die Musik aus (ein
-    laufender Jingle wird abgebrochen) - der Icecast-Stream selbst bleibt die
-    ganze Zeit stehen, es kommt nur still an."""
+    """Auf Sendung gehen gibt den gemeinsamen Master-Ausgang frei. Off air stoppt
+    nur diese Ausgabe; Einzel-Mutes und Player bleiben unveraendert aktiv."""
     state = get_or_create_live_state(db)
     state.on_air = body.on_air
     db.commit()

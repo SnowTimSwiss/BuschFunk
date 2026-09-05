@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .. import runtime
 from ..auth import require_admin
 from ..db import get_db
-from ..live_state import broadcast_live_state
+from ..live_state import apply_bus_state, broadcast_live_state, get_or_create_live_state
 from ..models import Bus
 from ..schemas import BusRename, BusUpdate
 
@@ -43,11 +43,7 @@ async def update_bus(bus_id: int, body: BusUpdate, db: Session = Depends(get_db)
     if body.volume is not None:
         bus.volume = max(0.0, min(1.5, body.volume))
     db.commit()
-    if runtime.audio_backend is not None:
-        if body.is_muted is not None:
-            await runtime.audio_backend.set_mute(bus.device_id, bus.is_muted)
-        if body.volume is not None:
-            await runtime.audio_backend.set_volume(bus.device_id, bus.volume)
+    await apply_bus_state(bus, get_or_create_live_state(db).on_air)
     await broadcast_live_state(db)
     return {"ok": True}
 

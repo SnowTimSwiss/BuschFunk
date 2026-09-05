@@ -1,20 +1,17 @@
 """Backend ohne echte Audio-Hardware.
 
-`DummyAudioBackend` meldet **keine** Geräte - wenn kein PipeWire läuft, hängt
+`DummyAudioBackend` meldet **keine** Geraete - wenn kein PipeWire laeuft, haengt
 auch nichts am System, und die UI soll genau das zeigen statt Platzhalter.
-`DemoAudioBackend` (nur über `AUDIO_BACKEND=demo`) simuliert Geräte und Pegel
-für Screenshots/Entwicklung am Laptop.
+`DemoAudioBackend` (nur ueber `AUDIO_BACKEND=demo`) simuliert Geraete und Pegel
+fuer Screenshots/Entwicklung am Laptop.
 """
 
 import random
 
-from .backend import AudioBackend, DiscoveredBus, PlayerStatus
+from .backend import AudioBackend, DiscoveredBus
 
 
 class DummyAudioBackend(AudioBackend):
-    def __init__(self) -> None:
-        self._player = PlayerStatus()
-
     async def start(self) -> None:
         pass
 
@@ -36,14 +33,11 @@ class DummyAudioBackend(AudioBackend):
     async def get_master_level(self) -> float:
         return 0.0
 
-    async def play_file(self, path: str, title: str | None = None, segment_id: int | None = None) -> None:
-        self._player = PlayerStatus(playing=True, title=title, segment_id=segment_id)
+    def playback_sink(self) -> str | None:
+        return None  # Player laeuft simuliert mit, es kommt aber kein Ton raus
 
-    async def stop_player(self) -> None:
-        self._player = PlayerStatus()
-
-    def player_status(self) -> PlayerStatus:
-        return self._player
+    async def set_stream_volume(self, stream_name: str, volume: float) -> bool:
+        return True
 
     def mix_monitor_source(self) -> str:
         return "dummy://buschfunk-mix"
@@ -51,14 +45,13 @@ class DummyAudioBackend(AudioBackend):
 
 DEMO_BUSES = [
     DiscoveredBus(device_id="demo:mixer", display_name="Mischpult / Mikrofone", direction="in"),
-    DiscoveredBus(device_id="demo:laptop", display_name="Laptop / Spotify", direction="in"),
+    DiscoveredBus(device_id="demo:laptop", display_name="Laptop", direction="in"),
     DiscoveredBus(device_id="demo:monitor", display_name="Monitor-Lautsprecher", direction="out"),
 ]
 
 
 class DemoAudioBackend(DummyAudioBackend):
     def __init__(self) -> None:
-        super().__init__()
         self._muted: dict[str, bool] = {b.device_id: True for b in DEMO_BUSES}
         self._volume: dict[str, float] = {b.device_id: 1.0 for b in DEMO_BUSES}
 
@@ -79,10 +72,14 @@ class DemoAudioBackend(DummyAudioBackend):
         return levels
 
     async def get_master_level(self) -> float:
+        from .. import runtime
+
         ins = [
-            lvl
-            for dev, lvl in (await self.get_levels()).items()
-            if any(b.device_id == dev and b.direction == "in" for b in DEMO_BUSES)
+            level
+            for device_id, level in (await self.get_levels()).items()
+            if any(b.device_id == device_id and b.direction == "in" for b in DEMO_BUSES)
         ]
-        player = random.uniform(0.2, 0.7) if self._player.playing else 0.0
-        return round(min(1.0, max([*ins, player], default=0.0)), 3)
+        music = 0.0
+        if runtime.player is not None and runtime.player.state()["playing"]:
+            music = random.uniform(0.25, 0.75) * runtime.player.volume
+        return round(min(1.0, max([*ins, music], default=0.0)), 3)

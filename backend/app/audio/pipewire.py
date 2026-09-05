@@ -23,10 +23,9 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import time
 
-from .backend import AudioBackend, DiscoveredBus, PlayerStatus
+from .backend import AudioBackend, DiscoveredBus
 
 logger = logging.getLogger("buschfunk.audio.pipewire")
 
@@ -152,8 +151,6 @@ class PipeWireAudioBackend(AudioBackend):
         self._linked: set[str] = set()           # bereits verkabelte device_ids
         self._monitors: dict[str, _LevelMonitor] = {}
         self._master = _LevelMonitor(MIX_MONITOR)
-        self._player_proc: asyncio.subprocess.Process | None = None
-        self._player = PlayerStatus()
 
     # ---------- Lifecycle ----------
 
@@ -162,7 +159,6 @@ class PipeWireAudioBackend(AudioBackend):
         self._master.start()
 
     async def stop(self) -> None:
-        await self.stop_player()
         await self._master.stop()
         for monitor in list(self._monitors.values()):
             await monitor.stop()
@@ -290,35 +286,22 @@ class PipeWireAudioBackend(AudioBackend):
     async def get_master_level(self) -> float:
         return self._master.level
 
-    # ---------- Interner Player (Jingles/Intros/Outros) ----------
+    # ---------- Musik/Jingle-Wiedergabe ----------
 
-    async def play_file(self, path: str, title: str | None = None, segment_id: int | None = None) -> None:
-        await self.stop_player()
-        # "pipewire" ist die generische ALSA-PCM des pipewire-alsa-Plugins;
-        # PIPEWIRE_NODE lenkt sie auf unseren Mix-Sink, ganz ohne systemweite
-        # asound.conf-Änderung.
-        env = {**os.environ, "PIPEWIRE_NODE": MIX_SINK_NAME}
-        self._player_proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-re", "-i", path, "-f", "alsa", "pipewire",
-            env=env, stdin=asyncio.subprocess.DEVNULL,
-        )
-        self._player = PlayerStatus(playing=True, title=title, segment_id=segment_id)
+    def playback_sink(self) -> str:
+        return MIX_SINK_NAME
 
-    async def stop_player(self) -> None:
-        if self._player_proc and self._player_proc.returncode is None:
-            self._player_proc.terminate()
-            try:
-                await asyncio.wait_for(self._player_proc.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                self._player_proc.kill()
-        self._player_proc = None
-        self._player = PlayerStatus()
-
-    def player_status(self) -> PlayerStatus:
-        if self._player.playing and self._player_proc and self._player_proc.returncode is not None:
-            self._player = PlayerStatus()  # Datei ist durchgelaufen
-        return self._player
+    async def set_stream_volume(self, stream_name: str, volume: float) -> bool:
+        """Lautstaerke eines laufenden Wiedergabe-Streams. Der Stream taucht in
+        PipeWire unter dem Namen auf, den ffmpeg dem pulse-Ausgang gibt."""
+        for node in await self._dump_nodes():
+            props = node.get("info", {}).get("props", {})
+            if props.get("media.name") == stream_name or props.get("node.name") == stream_name:
+                code, _out, _err = await _run(
+                    "wpctl", "set-volume", str(node.get("id")), f"{max(0.0, min(1.5, volume)):.2f}"
+                )
+                return code == 0
+        return False
 
     def mix_monitor_source(self) -> str:
         # ffmpeg liest über den "pulse"-Demuxer (PipeWire stellt dafür den

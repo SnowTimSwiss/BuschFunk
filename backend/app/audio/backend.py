@@ -10,25 +10,22 @@ class DiscoveredBus:
     connected: bool = True
 
 
-@dataclass
-class PlayerStatus:
-    playing: bool = False
-    title: str | None = None
-    segment_id: int | None = None
-
-
 class AudioBackend(ABC):
-    """Abstraktion über die tatsächliche Audio-Infrastruktur (PipeWire) bzw.
-    ein No-Op-Backend für Entwicklung ohne echte Hardware.
+    """Abstraktion ueber die tatsaechliche Audio-Infrastruktur (PipeWire) bzw.
+    ein No-Op-Backend fuer Entwicklung ohne echte Hardware.
 
     Ein Bus ist entweder ein Eingang (direction="in": eine Audioquelle, die
     dauerhaft in den einen gemeinsamen Loopback-Mix einspeist) oder ein
-    Ausgang (direction="out": ein Gerät, das den fertigen Mix abbekommt,
-    z.B. Monitor-Lautsprecher). Mute/Unmute und Lautstärke passieren immer am
-    jeweiligen Gerät selbst, nie am ffmpeg-Stream.
+    Ausgang (direction="out": ein Geraet, das den fertigen Mix abbekommt,
+    z.B. Monitor-Lautsprecher). Mute/Unmute und Lautstaerke passieren immer am
+    jeweiligen Geraet selbst, nie am ffmpeg-Stream.
 
-    Es werden ausschliesslich Geräte gemeldet, die tatsächlich am System
-    hängen - keine Platzhalter, keine Default-Einträge.
+    Musik und Jingles spielt der Player (audio/player.py) als eigene Streams in
+    denselben Mix - PipeWire summiert das von selbst, ein Jingle kann also ueber
+    der Musik laufen.
+
+    Es werden ausschliesslich Geraete gemeldet, die tatsaechlich am System
+    haengen - keine Platzhalter, keine Default-Eintraege.
     """
 
     @abstractmethod
@@ -41,7 +38,7 @@ class AudioBackend(ABC):
 
     @abstractmethod
     async def discover_buses(self) -> list[DiscoveredBus]:
-        """Aktuell wirklich angeschlossene Quellen/Ausgänge."""
+        """Aktuell wirklich angeschlossene Quellen/Ausgaenge."""
 
     @abstractmethod
     async def set_mute(self, device_id: str, muted: bool) -> None:
@@ -60,17 +57,15 @@ class AudioBackend(ABC):
         """Pegel des fertigen Mixes, also exakt das, was rausgeht."""
 
     @abstractmethod
-    async def play_file(self, path: str, title: str | None = None, segment_id: int | None = None) -> None:
-        """Interner Player-Bus: eine Datei (Jingle/Intro/Outro) in den Mix spielen."""
+    def playback_sink(self) -> str | None:
+        """Sink-Name, in den Musik/Jingles gespielt werden. None = kein echtes
+        Audio vorhanden, der Player laeuft dann nur simuliert mit."""
 
     @abstractmethod
-    async def stop_player(self) -> None:
-        ...
-
-    @abstractmethod
-    def player_status(self) -> PlayerStatus:
-        ...
+    async def set_stream_volume(self, stream_name: str, volume: float) -> bool:
+        """Lautstaerke eines laufenden Wiedergabe-Streams (Musik) setzen.
+        False, wenn der Stream (noch) nicht gefunden wurde."""
 
     @abstractmethod
     def mix_monitor_source(self) -> str:
-        """ffmpeg-Input-Spezifikation für den finalen Mix (für stream.py)."""
+        """ffmpeg-Input-Spezifikation fuer den finalen Mix (fuer stream.py)."""

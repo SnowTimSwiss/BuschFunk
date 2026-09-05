@@ -1,23 +1,8 @@
-from datetime import datetime, timezone
-
 from sqlalchemy.orm import Session
 
 from . import runtime
-from .models import Bus, LiveState, Segment, Show
+from .models import Bus, LiveState
 from .ws import manager
-
-
-def flatten_playable(show: Show) -> list[Segment]:
-    """Top-level Segmente ohne Kinder + die Kinder von Segmenten mit Kindern
-    (eine Verschachtelungsebene) - genau diese Liste wird von Weiter/Zurück
-    durchlaufen, nie der Eltern-Knoten selbst."""
-    flat: list[Segment] = []
-    for seg in show.segments:
-        if seg.children:
-            flat.extend(seg.children)
-        else:
-            flat.append(seg)
-    return flat
 
 
 def get_or_create_live_state(db: Session) -> LiveState:
@@ -30,14 +15,27 @@ def get_or_create_live_state(db: Session) -> LiveState:
     return state
 
 
-def compute_elapsed_seconds(state: LiveState) -> int:
-    elapsed = state.elapsed_offset_seconds
-    if state.is_on_air and state.segment_started_at is not None:
-        started = state.segment_started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-        elapsed += int((datetime.now(timezone.utc) - started).total_seconds())
-    return elapsed
+async def apply_bus_state(bus: Bus, on_air: bool) -> None:
+    """Mute und Lautstaerke auf das Geraet legen.
+
+    Eingaenge sind zusaetzlich stumm, solange nicht auf Sendung ist - "off air"
+    schliesst also alle Mikrofone auf einmal, ohne die einzeln gesetzten
+    Mute-Schalter zu ueberschreiben. Ausgaenge (Monitor-Lautsprecher) bleiben
+    davon unberuehrt, im Regieraum soll man weiter mithoeren koennen.
+    """
+    backend = runtime.audio_backend
+    if backend is None:
+        return
+    muted = bus.is_muted or (bus.direction == "in" and not on_air)
+    await backend.set_mute(bus.device_id, muted)
+    await backend.set_volume(bus.device_id, bus.volume)
+
+
+async def apply_all_buses(db: Session) -> None:
+    on_air = get_or_create_live_state(db).on_air
+    for bus in db.query(Bus).all():
+        if bus.device_id in runtime.last_seen_device_ids:
+            await apply_bus_state(bus, on_air)
 
 
 async def _levels() -> tuple[dict[str, float], float]:
@@ -49,61 +47,63 @@ async def _levels() -> tuple[dict[str, float], float]:
         return {}, 0.0
 
 
-def _player_payload() -> dict:
-    if runtime.audio_backend is None:
-        return {"playing": False, "title": None, "segment_id": None}
-    status = runtime.audio_backend.player_status()
-    return {"playing": status.playing, "title": status.title, "segment_id": status.segment_id}
+def _player_state() -> dict:
+    if runtime.player is None:
+        return {"playing": False, "paused": False, "title": None, "position": 0.0,
+                "duration": 0.0, "queue_length": 0, "queue_index": 0, "queue_ahead": [],
+                "repeat": True, "volume": 1.0, "track_id": None}
+    return runtime.player.state()
+
+
+def _jingle_state() -> dict:
+    if runtime.jingles is None:
+        return {"playing": False, "title": None}
+    return runtime.jingles.state()
 
 
 async def build_live_payload(db: Session) -> dict:
     state = get_or_create_live_state(db)
-    current_segment = db.get(Segment, state.current_segment_id) if state.current_segment_id else None
-
     buses_db = db.query(Bus).order_by(Bus.direction, Bus.id).all()
     levels, master_level = await _levels()
 
-    bus_payload = [
-        {
-            "id": b.id,
-            "device_id": b.device_id,
-            "display_name": b.display_name,
-            "direction": b.direction,
-            "is_muted": b.is_muted,
-            "volume": b.volume,
-            "level": levels.get(b.device_id, 0.0),
-            "connected": b.device_id in runtime.last_seen_device_ids,
-        }
-        for b in buses_db
-    ]
-
     return {
         "type": "live_state",
-        "active_show_id": state.active_show_id,
-        "current_segment_id": state.current_segment_id,
-        "current_segment_title": current_segment.title if current_segment else None,
-        "elapsed_seconds": compute_elapsed_seconds(state),
-        "is_on_air": state.is_on_air,
-        "buses": bus_payload,
+        "on_air": state.on_air,
+        "buses": [
+            {
+                "id": b.id,
+                "device_id": b.device_id,
+                "display_name": b.display_name,
+                "direction": b.direction,
+                "is_muted": b.is_muted,
+                "volume": b.volume,
+                "level": levels.get(b.device_id, 0.0),
+                "connected": b.device_id in runtime.last_seen_device_ids,
+            }
+            for b in buses_db
+        ],
         "master_level": master_level,
-        "player": _player_payload(),
+        "player": _player_state(),
+        "jingle": _jingle_state(),
         "audio_ready": runtime.audio_ready,
     }
 
 
 async def build_meters_payload(db: Session) -> dict:
-    """Kleines, häufig gesendetes Paket nur mit den Pegeln - damit die Meter
-    flüssig laufen, ohne jedes Mal den ganzen Live-Zustand zu verschicken."""
+    """Kleines, haeufig gesendetes Paket nur mit Pegeln und Abspielposition -
+    damit Meter und Fortschrittsbalken fluessig laufen, ohne jedes Mal den
+    ganzen Zustand zu verschicken."""
     levels, master_level = await _levels()
     id_by_device = {b.device_id: b.id for b in db.query(Bus.id, Bus.device_id).all()}
+    player = _player_state()
     return {
         "type": "meters",
         "levels": {str(id_by_device[dev]): lvl for dev, lvl in levels.items() if dev in id_by_device},
         "master_level": master_level,
-        "player_playing": _player_payload()["playing"],
+        "position": player["position"],
+        "playing": player["playing"],
     }
 
 
 async def broadcast_live_state(db: Session) -> None:
-    payload = await build_live_payload(db)
-    await manager.broadcast(payload)
+    await manager.broadcast(await build_live_payload(db))

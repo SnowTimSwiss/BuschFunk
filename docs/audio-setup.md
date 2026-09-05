@@ -28,9 +28,15 @@ echten Pi mit angeschlossenem Mischpult unbedingt durchgehen.
    `pw-link "<mischpult>:capture_FL" "buschfunk-mix:playback_FL"` (und FR).
 4. **Mute**: `wpctl set-mute <node-id> 1` sollte das Signal stumm schalten,
    ohne den Link zu trennen (in `wpctl status` bleibt die Verbindung sichtbar).
-5. **Player-Bus (Jingles)**: `PIPEWIRE_NODE=buschfunk-mix ffmpeg -re -i test.mp3 -f alsa pipewire`
-   sollte hörbar über den Mix laufen. Falls "pipewire" als ALSA-PCM nicht
-   gefunden wird: `pipewire-alsa` nachinstallieren.
+5. **Musik/Jingle-Wiedergabe**: `ffmpeg -i test.mp3 -f pulse -device buschfunk-mix "BuschFunk-Musik"`
+   sollte hörbar über den Mix laufen. Genau so startet BuschFunk seine beiden
+   Wiedergabe-Kanäle ("BuschFunk-Musik" und "BuschFunk-Jingle"); weil beide in
+   denselben Sink schreiben, summiert PipeWire sie - ein Jingle läuft also über
+   der Musik, ohne sie zu stoppen. Kein `-re`: das Ausgabegerät gibt den Takt
+   vor, dadurch funktioniert Pause per SIGSTOP/SIGCONT ohne Schnellvorlauf.
+   Die Musik-Lautstärke setzt BuschFunk auf dem Stream-Node:
+   `wpctl status` zeigt ihn unter Streams als "BuschFunk-Musik",
+   `wpctl set-volume <node-id> 0.6` macht ihn leiser.
 6. **Stream-Ausgang**: `ffmpeg -f pulse -i buschfunk-mix.monitor -t 3 -f null -`
    sollte 3 Sekunden lang ohne Fehler durchlaufen (Beweis, dass ffmpeg den
    Mix mitlesen kann - Voraussetzung für den Dauerstream in `audio/stream.py`).

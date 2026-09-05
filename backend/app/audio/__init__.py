@@ -1,13 +1,13 @@
 import logging
 
 from ..config import settings
-from .backend import AudioBackend, DiscoveredBus, PlayerStatus
+from .backend import AudioBackend, DiscoveredBus
 from .dummy import DemoAudioBackend, DummyAudioBackend
 from .pipewire import PipeWireAudioBackend, pipewire_available
 
 logger = logging.getLogger("buschfunk.audio")
 
-__all__ = ["AudioBackend", "DiscoveredBus", "PlayerStatus", "create_audio_backend"]
+__all__ = ["AudioBackend", "DiscoveredBus", "create_audio_backend"]
 
 
 async def create_audio_backend() -> AudioBackend:

@@ -2,7 +2,22 @@
 
 Einfache Software für simples Radio übers Internet.
 
-Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.md).
+Musik und Jingles aus der eigenen Mediathek, ein Mischpult mit Pegeln und
+Lautstärkereglern, ein grosser "Auf Sendung"-Schalter - mehr braucht ein
+Lagerradio nicht. Details siehe [`docs/buschfunk-spec.md`](docs/buschfunk-spec.md).
+
+## Was die Regie kann
+
+- **Mediathek:** MP3s per Drag-and-Drop hochladen, umbenennen, sofort abspielen
+  oder an die Warteschlange hängen.
+- **Playlists:** anlegen, füllen, umsortieren, der Reihe nach oder zufällig
+  starten. Mit "endlos wiederholen" geht die Musik nie von selbst aus.
+- **Jingles:** ein Titel mit ★ wird zum Knopf im Jingle-Board und läuft auf
+  Knopfdruck *über* die Musik, ohne sie zu stoppen.
+- **Mischpult:** nur wirklich angeschlossene Geräte, je mit Live-Pegel,
+  Lautstärkeregler und Stumm-Schalter, dazu ein Master-Meter.
+- **Auf Sendung:** ein Schalter öffnet alle Mikrofone; off air läuft die Musik
+  weiter, der Stream reisst nie ab.
 
 ## Schnellstart (lokale Entwicklung, ohne echte Audio-Hardware)
 
@@ -14,6 +29,7 @@ cd backend && AUDIO_BACKEND=demo ../.venv/bin/python run.py
 ```
 
 - Admin-UI: <http://localhost:8000/admin/> (Setup-Code steht im Terminal-Log)
+  – solange noch kein Admin-Passwort gesetzt ist
 - Hörer-Ansicht: <http://localhost:8000/listen/>
 - API-Doku: <http://localhost:8000/docs>
 
@@ -68,7 +84,7 @@ dann nur lokal im Lager-WLAN erreichbar. Details/manuelles Setup:
 [`deploy/cloudflared/config.yml.example`](deploy/cloudflared/config.yml.example).
 
 Für die echte PipeWire/Mischpult-Verkabelung: [`docs/audio-setup.md`](docs/audio-setup.md)
-(auf echter Hardware noch zu verifizieren, siehe Spec Abschnitt 10).
+(auf echter Hardware noch zu verifizieren, siehe Spec Abschnitt 11).
 
 Details zu den einzelnen Deploy-Dateien: [`deploy/systemd/buschfunk.service`](deploy/systemd/buschfunk.service),
 [`deploy/icecast.xml.example`](deploy/icecast.xml.example).
@@ -76,7 +92,7 @@ Details zu den einzelnen Deploy-Dateien: [`deploy/systemd/buschfunk.service`](de
 ## Struktur
 
 ```
-backend/    FastAPI-App (Rundown/Live-Steuerung/Busse/Auth/Self-Update)
+backend/    FastAPI-App (Mediathek/Playlists/Player/Mischpult/Auth/Self-Update)
 frontend/   Admin-UI (Regie) + Listener-UI, statisches Vanilla-JS
 deploy/     systemd-Unit, Icecast-/cloudflared-Vorlagen, Install-Skript
 docs/       Spezifikation + Audio-Setup-Notizen

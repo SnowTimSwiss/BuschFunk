@@ -6,102 +6,100 @@ Lagerradio für das Regiolager 27. Läuft auf einem Raspberry Pi (oder beliebige
 
 - Lagerplatz ca. 2 Hektar, Turm/Mast 5–10 m Höhe für Antenne/Outdoor-AP verfügbar.
 - Strom: entweder Netzstrom vor Ort, sonst Jackery + Solarpanel. Geschätzte Dauerlast der Technik: ~20–35 W (Pi, USB-Audiointerface, Outdoor-AP, ggf. 4G-Router).
-- Sendebetrieb: ca. 1–2 h Live-Sendung pro Tag, restliche Zeit Playlist/Dauerbetrieb möglich.
+- Sendebetrieb: ca. 1–2 h Live-Sendung pro Tag, den Rest der Zeit läuft Musik aus der Mediathek.
 - Erwartete Hörerzahl: max. ca. 50, gleichzeitig über WLAN vor Ort und mobil/extern.
-- Bestehendes Equipment: analoges Mischpult, diverse Mikrofone aus dem Bandraum (u.a. Shure Beta 58 – supercardioid, für Live-Vocals/Instrumente geeignet, für Interviews eher ein Mikro mit breiterer Charakteristik verwenden). Spotify-Wiedergabe läuft über einen Laptop, der analog/per USB direkt am Mischpult angeschlossen wird (kein spotifyd/librespot nötig).
+- Bestehendes Equipment: analoges Mischpult, diverse Mikrofone aus dem Bandraum (u.a. Shure Beta 58 – supercardioid, für Live-Vocals/Instrumente geeignet, für Interviews eher ein Mikro mit breiterer Charakteristik verwenden).
+- Bedient wird das Ganze von Leuten, die nebenher noch das Lager schmeissen: alles muss ohne Einarbeitung, im Stehen, auf einem Handy bedienbar sein.
 
 ## 2. Architektur-Überblick
 
-**Kernidee des Audio-Signalwegs:** Alle Quellen (Mischpult, weitere USB-Audiogeräte, ein interner "Player" für Jingles/Intros/Outros/Playlist-Dateien) speisen dauerhaft in einen ALSA/PipeWire-Loopback-Bus ein, jede Quelle einzeln stumm-/lautschaltbar. Genau **ein** ffmpeg-Prozess liest diesen Loopback dauerhaft aus und streamt an Icecast – dadurch ist "live/nicht live"-Umschalten nur Mute/Unmute im Hintergrund, nie ein Stream-Reconnect (kein Klick, kein Aussetzer). Icecast-Fallback-Mount übernimmt automatisch das Zurückschalten auf Playlist, falls kein Bus mehr aktiv ist.
+**Kernidee des Audio-Signalwegs:** Alle Quellen speisen dauerhaft in einen PipeWire-Loopback-Bus (`buschfunk-mix`) ein – das angeschlossene Mischpult, weitere USB-Audiogeräte, und dazu die beiden internen Wiedergabe-Kanäle (Musik und Jingles). Jede Quelle ist einzeln stumm-/lautschaltbar. Genau **ein** ffmpeg-Prozess liest diesen Loopback dauerhaft aus und streamt an Icecast – dadurch ist "auf Sendung / nicht auf Sendung" nur Mute/Unmute im Hintergrund, nie ein Stream-Reconnect (kein Klick, kein Aussetzer).
 
-**Zugriffswege (hybrid, wie ursprünglich gewünscht):**
-1. **Lokal:** Outdoor-AP am Turm strahlt ein eigenes WLAN ab, das nur den Icecast-Stream des Pi erreichbar macht – funktioniert ohne Internetverbindung.
+Musik und Jingles sind **zwei getrennte Streams in denselben Sink**: PipeWire summiert sie, deshalb kann ein Jingle über die laufende Musik gelegt werden, ohne irgendetwas zu stoppen.
+
+**Zugriffswege (hybrid):**
+1. **Lokal:** Outdoor-AP am Turm strahlt ein eigenes WLAN ab, das den Icecast-Stream des Pi erreichbar macht – funktioniert ohne Internetverbindung.
 2. **Extern/mobil:** cloudflared läuft als eingebauter Bestandteil der Software (kein separater VPS nötig) und exposed Stream + Listener-UI + Admin-UI über einen Named Tunnel auf eine feste Subdomain.
 
 ## 3. Software-Stack
 
 - **Backend:** Python, FastAPI + WebSockets (für Live-Updates zwischen Admin-UI, Listener-UI und Serverzustand).
-- **Datenhaltung:** SQLite-Datei (Segmente, Busse, Shows/Tage, Sendezeiten, Admin-Auth) + `media/`-Ordner für hochgeladene Audiodateien (Jingles, Intros, Outros, Interview-Vorabaufnahmen etc.).
-- **Audio:** ALSA/PipeWire für Geräteerkennung, Loopback und Routing; `ffmpeg` für den Dauerstream an Icecast; Icecast2 als Streaming-Server mit Fallback-Mount.
-- **Tunnel:** `cloudflared` als Subprozess/systemd-Sidecar, über Named Tunnel + feste Subdomain (Config im Repo als Vorlage, Token via `.env`, nicht eingecheckt).
-- **Frontend:** zwei separate, schlanke Web-UIs (siehe unten), kein schweres Frontend-Framework nötig – Vanilla JS oder ein leichtes Setup reicht.
+- **Datenhaltung:** SQLite-Datei (Mediathek, Playlists, Geräte, Admin-Auth) + `media/`-Ordner für die hochgeladenen Audiodateien.
+- **Audio:** PipeWire für Geräteerkennung, Loopback und Routing; `ffmpeg` für Wiedergabe, Pegelmessung und den Dauerstream an Icecast; Icecast2 als Streaming-Server.
+- **Tunnel:** `cloudflared` als systemd-Sidecar über Named Tunnel + feste Subdomain (Config im Repo als Vorlage, Secrets via `.env`, nicht eingecheckt).
+- **Frontend:** zwei separate, schlanke Web-UIs, Vanilla JS, kein Framework, keine externen Fonts.
 
 ## 4. Datenmodell
 
-### Segment
+### Track (Mediathek)
 ```
-Segment
+Track
  ├─ id
- ├─ type: song | interview | spotify | jingle | news | speech | ...
- ├─ title
- ├─ time (geplante Uhrzeit, Orientierung, kein hartes Muss)
- ├─ planned_duration (Sekunden)
- ├─ fixed: bool               // markiert "Fixpunkt" (z.B. feste News-Zeit)
- ├─ notes: text|null          // z.B. Stichpunkte für Ansagen
- ├─ media_file: path|null     // z.B. Intro/Outro/vorab aufgenommene Datei
- ├─ auto_route: [bus_id]      // welche Busse bei Aktivierung unmuted werden
- └─ children: [Segment]       // eine Verschachtelungsebene, z.B.
-                              //   Interview → [Intro-Jingle, Talk-Block, Outro-Jingle]
+ ├─ filename          // Datei in media/, kollisionsfrei benannt
+ ├─ original_name     // wie die Datei beim Hochladen hiess
+ ├─ title             // Anzeigename, jederzeit umbenennbar
+ ├─ kind: music | jingle
+ └─ duration          // Sekunden, beim Upload per ffprobe bestimmt
 ```
-Verschachtelung bewusst auf **eine Ebene** begrenzt (Kinder haben keine eigenen Kinder) – reicht für den Anwendungsfall und hält die UI übersichtlich.
+`kind` entscheidet nur darüber, wo der Titel auftaucht: Jingles landen zusätzlich als grosse Knöpfe im Jingle-Board. Ein Jingle kann trotzdem in einer Playlist stehen.
 
-### Bus (Audioquelle)
+### Playlist
+```
+Playlist
+ ├─ id, name          // z.B. "Morgenmusik", "Lagerfeuer"
+ └─ items: [PlaylistItem]   // geordnete Liste, verweist auf Tracks
+```
+Ein Track darf mehrfach in derselben Playlist stehen; das Löschen einer Playlist lässt die Tracks in der Mediathek unangetastet.
+
+### Bus (Audiogerät)
 ```
 Bus
- ├─ device_id            // ALSA/PipeWire-Geräte-ID, zur Wiedererkennung nach Neustart
+ ├─ device_id            // PipeWire-Node-Name, zur Wiedererkennung nach Neustart
  ├─ display_name         // vom Team vergeben, z.B. "Bandraum-Pult"
- ├─ is_muted: bool
- └─ last_seen_active     // für Pegelanzeige / Verbindungsstatus
+ ├─ direction: in | out  // Quelle oder Wiedergabegerät (Monitor)
+ ├─ is_muted, volume
+ └─ last_seen_active
 ```
-Busse werden **automatisch erkannt** (ALSA/PipeWire-Geräteliste + udev-Hotplug-Events), nicht im Code fest verdrahtet. Neu angeschlossene Geräte erscheinen ohne Neustart als neuer Bus in der UI; Zuordnung Geräte-ID → Anzeigename wird dauerhaft gespeichert.
+Busse werden **automatisch erkannt**, nicht im Code fest verdrahtet. Neu angeschlossene Geräte erscheinen ohne Neustart; Name, Mute und Lautstärke werden gespeichert und beim Wiedereinstecken automatisch aufs Gerät zurückgeschrieben.
 
-### Show / Tag
+### Sendezustand
 ```
-Show (Tag)
- ├─ id, label (z.B. "Tag 3 – Mittwoch")
- └─ segments: [Segment]   // geordnete Liste, per Drag-and-Drop sortierbar
+LiveState
+ └─ on_air: bool      // sind die Mikrofone offen?
 ```
-
-### Sendezeiten (öffentlich, getrennt von den Segment-Uhrzeiten)
-```
-ScheduleEntry
- └─ day, from, to, title, public: bool     // ob es in der Listener-UI angezeigt wird
-```
+Mehr Zustand gibt es nicht – der Player-Zustand (was läuft, was kommt) lebt im laufenden Prozess und wird per WebSocket verteilt.
 
 ### Admin-Auth
 ```
 AdminUser
- └─ password_hash (bcrypt/argon2, nie Klartext), setup_code_used: bool
+ └─ password_hash (bcrypt, nie Klartext) + einmaliger SetupCode
 ```
 
-## 5. Admin-UI – Funktionsumfang
+## 5. Admin-UI ("Regie") – Funktionsumfang
 
-**Tage/Shows-Liste** (Sidebar): Tage anlegen, umbenennen, löschen, auswählen; Anzahl Segmente je Tag auf einen Blick.
+Eine einzige Seite, kein Modus-Wechsel: links das, was gerade passiert, rechts das Mischpult.
 
-**Ablauf-Editor** (Rundown): Segmente hinzufügen/bearbeiten/löschen/per Drag-and-Drop umsortieren, Unterpunkte direkt an der Segmentzeile anlegen, "Fixpunkt"-Markierung. Datei-Upload direkt am Segment, dabei wird zusätzlich festgelegt, **was** die Datei ist (Intro / Outro / Aufnahme / Jingle) und **wann** sie läuft (automatisch beim Segmentstart, automatisch am geplanten Ende, oder nur auf Knopfdruck). Automatisch gestartete Dateien laufen nur, wenn ON AIR ist.
+**Player:** Titel, Fortschrittsbalken, Start/Pause, Zurück/Weiter, Stopp, eigener Lautstärkeregler für die Musik und ein "endlos wiederholen"-Schalter (per Default an – Sendepausen sind der Feind). Darunter "Als nächstes" mit den kommenden Titeln; ein Klick springt hin, das ✕ nimmt einen Titel wieder raus.
 
-**Live-Steuerung:**
-- Aktuelles Segment **massiv hervorgehoben**: eigener Panel-Rahmen in Warnfarbe, pulsierender "LIVE"-Badge – muss auch im Stress sofort auffallen.
-- **Countdown** der verbleibenden Zeit des aktuellen Segments, inkl. Fortschrittsbalken; bei Overrun (Segment läuft länger als geplant) kippt die Anzeige sichtbar um (Farbe, "+"-Zähler statt Countdown).
-- **Fixpunkt-Anzeige:** Restzeit bis zum nächsten als "fix" markierten Segment, berechnet aus der Kette der verbleibenden Segmentdauern.
-- **"Als nächstes"-Vorschau** direkt sichtbar, ohne scrollen zu müssen.
-- **Transport:** Zurück/Weiter zum Wechseln des aktiven Segments, ON-AIR/OFF-AIR-Umschalter.
-- **Transport bleibt jederzeit erreichbar:** auf schmalen Bildschirmen liegt eine feste Leiste am unteren Rand mit Zurück/Weiter, Countdown und dem ON-AIR/OFF-AIR-Schalter - Off Air gehen ist immer einen Tipp entfernt, ohne zu scrollen. Alle Transport-Aktionen schalten die UI sofort um und lassen den Server nachziehen, statt auf die Antwort zu warten.
-- **Mischpult-Ansicht:** aufgelistet wird nur, was tatsächlich am Pi hängt - keine Platzhalter, keine Default-Ausgänge. Je Gerät: Live-Pegelanzeige mit Peak-Hold, Lautstärkeregler (`wpctl set-volume`) und ein Stumm/An-Schalter. Namen und Lautstärken bleiben gespeichert und werden beim Wiedereinstecken automatisch aufs Gerät zurückgeschrieben. Geräte, die mal dran waren und gerade fehlen, stehen zusammengeklappt darunter und lassen sich vergessen.
-- **Master-Meter:** eigener, grosser Pegel des fertigen Mixes ("das geht raus") mit Klartext-Hinweis, ob gerade gar nichts rausgeht oder übersteuert wird.
-- **Notizen pro Segment:** Textfeld direkt am aktuellen Segment, gespeichert pro Segment. Zusätzlich ein **Pop-out-Button**, der ein zweites Browserfenster öffnet (für zweiten Bildschirm/Tablet) mit grossem Countdown, "Als nächstes" und denselben Notizen, live synchronisiert.
+**Jingle-Board:** alle als Jingle markierten Titel als grosse Knöpfe. Ein Tipp spielt sie **über** die laufende Musik, ohne sie zu stoppen.
 
-**Export/Import eines Tages:**
-- Export als **`.zip`**, nicht nur JSON: enthält `tag.json` (kompletter Rundown inkl. Referenzen) plus `media/`-Unterordner mit genau den Audiodateien, die in diesem Tag referenziert werden.
-- Import entpackt das Zip, kopiert Mediendateien in den lokalen `media/`-Ordner (Namenskollisionen per Hash-Suffix auflösen) und liest danach `tag.json` ein – damit ist ein exportierter Tag komplett portabel (USB-Stick, anderer Pi, egal).
+**Mediathek:** Dateien per Drag-and-Drop oder Dateiauswahl hochladen (mehrere gleichzeitig), Titel umbenennen, als Jingle markieren, löschen. Pro Titel: sofort abspielen (der Rest der Warteschlange bleibt stehen und läuft danach weiter) oder ans Ende der Warteschlange hängen. Suchfeld für grössere Sammlungen.
 
-**Sendezeiten-Tab:** eigene, öffentlich sichtbare Grobübersicht (getrennt von den minutengenauen Segment-Zeiten im Ablauf), die in der Listener-UI erscheint.
+**Playlists:** anlegen, umbenennen, löschen; Titel aus der Mediathek hinzufügen, umsortieren, entfernen. Eine Playlist lässt sich der Reihe nach starten, zufällig starten oder an die laufende Warteschlange anhängen.
 
-**Software-Update:** Bereich mit aktueller Version (Commit-Hash/Datum), Button "Nach Updates suchen" und "Jetzt aktualisieren" – zieht die neueste Version vom Git-Repository und startet die Anwendung selbständig neu, ohne den laufenden Stream zu unterbrechen.
+**Auf Sendung:** ein grosser Schalter. "Auf Sendung" heisst: die Mikrofone gehen auf. Off Air schliesst alle Eingänge auf einmal, ohne die einzeln gesetzten Mute-Schalter zu überschreiben – die Musik läuft dabei weiter, der Stream reisst nie ab. Monitor-Ausgänge bleiben unberührt, im Regieraum hört man weiter mit.
+
+**Mischpult-Ansicht:** aufgelistet wird nur, was tatsächlich am Pi hängt – keine Platzhalter, keine Default-Ausgänge. Je Gerät: Live-Pegel mit Peak-Hold, Lautstärkeregler (`wpctl set-volume`) und ein Stumm/An-Schalter. Geräte, die mal dran waren und gerade fehlen, stehen zusammengeklappt darunter und lassen sich vergessen.
+
+**Master-Meter:** grosser Pegel des fertigen Mixes ("das geht raus") mit Klartext-Hinweis, ob gerade gar nichts rausgeht oder übersteuert wird.
+
+**Immer erreichbar:** auf schmalen Bildschirmen liegt eine feste Leiste am unteren Rand mit dem Sendungs-Schalter und Zurück/Pause/Weiter – off air gehen ist immer einen Tipp entfernt, ohne zu scrollen. Alle Aktionen schalten die UI sofort um und lassen den Server nachziehen, statt auf die Antwort zu warten. Die Leertaste ist Start/Pause.
+
+**Software-Update:** Bereich mit aktueller Version (Commit-Hash/Datum), "Nach Updates suchen" und "Jetzt aktualisieren" – zieht die neueste Version aus dem Git-Repository und startet die Anwendung selbständig neu, ohne den Icecast-Stream zu unterbrechen.
 
 ## 6. Listener-UI – Funktionsumfang
 
-Bewusst minimal: Play/Stop, Anzeige der öffentlichen Sendezeiten (aus dem Sendezeiten-Tab) und des aktuell laufenden Segment-Titels. Kein Login nötig, für alle offen (lokal wie extern über die Cloudflare-Subdomain).
+Bewusst minimal: Play/Stop und der Titel, der gerade läuft (bzw. "Live aus dem Lager", wenn die Mikrofone offen sind). Kein Login, für alle offen.
 
 Dazu drei Dinge, die im Lager praktisch zählen:
 
@@ -113,30 +111,44 @@ Dazu drei Dinge, die im Lager praktisch zählen:
 
 Da die Admin-UI über die öffentliche Subdomain erreichbar ist, muss verhindert werden, dass irgendwer zuerst draufklickt und sich das Passwort schnappt:
 
-1. Beim allerersten Start generiert der Pi automatisch einen **Setup-Code** (z.B. 6-stellig) und zeigt ihn nur dort, wo physischer Zugriff nötig ist (Terminal-Log auf dem Pi, o.ä.).
-2. Die "Passwort setzen"-Seite verlangt zuerst diesen Code – erst danach kann das eigentliche Admin-Passwort gewählt werden. Der Code verfällt nach einmaliger Nutzung.
-3. Danach normaler Login mit Passwort (bcrypt/argon2-Hash in der SQLite-DB) + Session-Cookie.
-4. Der Admin-Login ist über einen Button auf der Listener-UI erreichbar ("Admin"), führt zur Passwort-/Login-Maske.
+1. Beim allerersten Start generiert der Pi einen **Setup-Code** (6-stellig) und schreibt ihn ins Log – dorthin kommt nur, wer physischen Zugriff hat.
+2. Die "Passwort setzen"-Seite verlangt zuerst diesen Code. Der Code verfällt nach einmaliger Nutzung.
+3. Danach normaler Login mit Passwort (bcrypt-Hash in der SQLite-DB) + Session-Cookie.
 
-## 8. Sicherheit / Betrieb
+Solange noch kein Passwort gesetzt ist, erzeugt jeder Start einen frischen Code. Ist bereits ein Admin-Konto da, wird **kein** neuer Code ausgegeben – dann gilt das gesetzte Passwort.
+
+## 8. Netzlast / WebSocket-Protokoll
+
+Zwei Nachrichtentypen über `/ws/live`:
+
+- `live_state` (1×/s, an alle): Sendezustand, Geräte, Player- und Jingle-Zustand inklusive der nächsten Titel.
+- `meters` (5×/s, nur an Clients, die sie anfordern): Pegel, Master-Pegel, Abspielposition.
+
+Die Regie abonniert die Meter, Hörer-Handys nicht – im Lager-WLAN soll niemand für Pegelanzeigen bezahlen, die er nie sieht. Von der Warteschlange gehen nur die nächsten 12 Titel über die Leitung, nicht die ganze Liste.
+
+## 9. Sicherheit / Betrieb
 
 - Cloudflare-Tunnel-Token und alle Secrets in `.env`, **nicht** ins Git-Repo (`.gitignore`).
-- Regelmässige Sicherung von SQLite-DB + `media/`-Ordner (z.B. Cronjob auf USB-Stick oder ins Homelab), nicht nur auf manuellen Export verlassen.
-- Geräte-Namenszuordnung (Bus-ID → Anzeigename) persistieren, damit nach Neustart nichts neu benannt werden muss.
+- Regelmässige Sicherung von SQLite-DB + `media/`-Ordner (z.B. auf USB-Stick), die beiden zusammen sind das komplette Backup.
+- Schema-Änderungen werden beim Start automatisch nachgezogen (`backend/app/db.py`), damit ein Update auf dem laufenden Pi nicht in einer kaputten Datenbank endet.
 
-## 9. Bewusst nicht verwendet (Scope-Entscheidungen)
+## 10. Bewusst nicht verwendet (Scope-Entscheidungen)
 
-- **Kein Liquidsoap** – für den gewünschten Funktionsumfang (Mischpult als Quelle + einfache Playlist + zwei schlanke WebUIs) overkill; die ALSA-Loopback-Bus-Lösung deckt denselben Bedarf mit weniger Komplexität ab.
-- **Kein spotifyd/librespot** – Spotify läuft stattdessen über einen Laptop, der direkt (analog/USB) am Mischpult hängt.
-- **Keine separate VPS** – cloudflared läuft eingebaut auf dem Pi, ersetzt einen extern gehosteten Relay-Server.
+- **Kein Liquidsoap** – für Mischpult als Quelle + Playlist + zwei schlanke WebUIs overkill; die Loopback-Bus-Lösung deckt denselben Bedarf mit weniger Komplexität ab.
+- **Kein spotifyd/librespot** – Musik kommt aus der eigenen Mediathek; ein Laptop kann zusätzlich analog/USB am Mischpult hängen.
+- **Keine separate VPS** – cloudflared läuft eingebaut auf dem Pi.
 
-## 10. Offene Punkte für spätere Iterationen
+**Bewusst wieder entfernt**, weil es in der Praxis mehr Verwaltung als Nutzen war:
 
-- Pegelmessung und Lautstärkeregelung laufen über je einen dauerhaften `ffmpeg -af astats`-Prozess pro Gerät bzw. `wpctl set-volume` – auf echter Hardware noch zu verifizieren (siehe `docs/audio-setup.md`).
+- **Tagespläne / Ablauf-Editor / Sendezeiten** samt Countdown, Fixpunkten, Segment-Notizen, Pop-out-Fenster und Tages-Export/Import. Ein Lagerradio läuft spontan; ein minutengenauer Sendeplan, den vorher jemand pflegen muss, hilft dabei nicht. Was bleibt, ist das Technische: Musik, Jingles, Mikrofone, Pegel.
+- **Notfall-Buttons** (SOS-Playlist / Alles stumm / Technischer Unterbruch) und der **Hell-Modus**. Stumm schalten geht direkt über den Sendungs-Schalter; ein zweites Farbschema kostet nur Pflege.
+
+## 11. Offene Punkte für spätere Iterationen
+
+- Pegelmessung, Wiedergabe und Lautstärkeregelung laufen über `ffmpeg` bzw. `wpctl` – auf echter Hardware verifizieren (siehe `docs/audio-setup.md`).
 - Feingranulare Rechte (falls später mehr als eine Person parallel Admin-Zugriff braucht) – aktuell reicht ein einzelner Admin-Account.
-
-**Bewusst wieder entfernt:** Notfall-Buttons (SOS-Playlist / Alles stumm / Technischer Unterbruch) samt Banner und der Hell-Modus. Stumm schalten geht direkt und schneller über die Geräteliste; ein zweites Farbschema kostet nur Pflege und hilft in einer abgedunkelten Regie niemandem.
+- Ein Software-Update beendet die laufende Musik (der Icecast-Stream selbst läuft weiter). Für ein unterbrechungsfreies Update müsste der Wiedergabe-Prozess über den Neustart hinweg adoptiert werden.
 
 ---
 
-*Farbschema: Konsolen-/Broadcast-Look, durchgehend dunkel, mit Live-Warnfarbe für das aktuelle Segment. Beide UIs kommen ohne externe Fonts und ohne Frontend-Framework aus – im Lager-WLAN gibt es oft kein Internet, und eine Seite, die auf Google Fonts wartet, ist genau dann langsam, wenn es drauf ankommt.*
+*Farbschema: Konsolen-/Broadcast-Look, durchgehend dunkel, mit Live-Warnfarbe für "auf Sendung". Beide UIs kommen ohne externe Fonts und ohne Frontend-Framework aus – im Lager-WLAN gibt es oft kein Internet, und eine Seite, die auf Google Fonts wartet, ist genau dann langsam, wenn es drauf ankommt.*

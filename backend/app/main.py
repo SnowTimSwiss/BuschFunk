@@ -10,23 +10,24 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import runtime
 from .audio import create_audio_backend
+from .audio.player import JinglePlayer, MusicPlayer, kill_orphans
 from .audio.stream import stream_manager
 from .auth import ensure_setup_code
 from .config import REPO_ROOT, settings
 from .db import SessionLocal, init_db
 from .live_state import (
+    apply_bus_state,
     build_live_payload,
     build_meters_payload,
-    compute_elapsed_seconds,
     get_or_create_live_state,
 )
-from .models import Bus, Segment
+from .models import Bus
 from .routers import auth as auth_router
 from .routers import buses as buses_router
-from .routers import days as days_router
-from .routers import export_import as export_import_router
+from .routers import library as library_router
 from .routers import live as live_router
-from .routers import schedule as schedule_router
+from .routers import player as player_router
+from .routers import playlists as playlists_router
 from .routers import stream_proxy as stream_proxy_router
 from .routers import system as system_router
 from .ws import manager
@@ -37,17 +38,8 @@ logger = logging.getLogger("buschfunk.main")
 FRONTEND_DIR = REPO_ROOT / "frontend"
 
 DISCOVERY_INTERVAL = 3.0   # Sekunden - Hotplug-Erkennung
-METER_INTERVAL = 0.2       # Sekunden - Pegel-Updates an die UIs
+METER_INTERVAL = 0.2       # Sekunden - Pegel-Updates an die Regie
 STATE_EVERY_N_METERS = 5   # -> voller Live-Zustand einmal pro Sekunde
-
-
-async def _apply_stored_state(bus: Bus) -> None:
-    """Mute/Lautstärke aus der DB auf ein (wieder) angeschlossenes Gerät legen -
-    damit ein neu eingestecktes Mischpult exakt so klingt wie vorher."""
-    if runtime.audio_backend is None:
-        return
-    await runtime.audio_backend.set_mute(bus.device_id, bus.is_muted)
-    await runtime.audio_backend.set_volume(bus.device_id, bus.volume)
 
 
 async def _discover_buses_loop() -> None:
@@ -62,6 +54,7 @@ async def _discover_buses_loop() -> None:
 
                 db = SessionLocal()
                 try:
+                    on_air = get_or_create_live_state(db).on_air
                     existing = {b.device_id: b for b in db.query(Bus).all()}
                     for found in discovered:
                         bus = existing.get(found.device_id)
@@ -76,34 +69,17 @@ async def _discover_buses_loop() -> None:
                             db.flush()
                         else:
                             bus.direction = found.direction
+                        # Ein frisch eingestecktes Geraet soll sofort wieder so
+                        # klingen wie vorher - Name, Mute und Pegel sind gespeichert.
                         if found.device_id not in known_connected:
-                            await _apply_stored_state(bus)
+                            await apply_bus_state(bus, on_air)
                     db.commit()
                 finally:
                     db.close()
                 known_connected = device_ids
         except Exception:
-            logger.exception("Geräte-Erkennung fehlgeschlagen")
+            logger.exception("Geraete-Erkennung fehlgeschlagen")
         await asyncio.sleep(DISCOVERY_INTERVAL)
-
-
-async def _check_end_media(db) -> None:
-    """Segmente, deren Datei "am geplanten Ende" laufen soll, genau einmal
-    anwerfen, sobald der Countdown durch ist."""
-    state = get_or_create_live_state(db)
-    if not state.is_on_air or state.current_segment_id is None:
-        return
-    if state.current_segment_id in runtime.fired_end_media:
-        return
-    segment = db.get(Segment, state.current_segment_id)
-    if segment is None or segment.media_trigger != "end" or not segment.media_file:
-        return
-    if compute_elapsed_seconds(state) < segment.planned_duration:
-        return
-    runtime.fired_end_media.add(segment.id)
-    from .routers.live import play_segment_media
-
-    await play_segment_media(db, segment)
 
 
 async def _broadcast_loop() -> None:
@@ -113,7 +89,6 @@ async def _broadcast_loop() -> None:
             db = SessionLocal()
             try:
                 if tick % STATE_EVERY_N_METERS == 0:
-                    await _check_end_media(db)
                     await manager.broadcast(await build_live_payload(db))
                 elif await manager.has_meter_subscribers():
                     await manager.broadcast(await build_meters_payload(db), meters_only=True)
@@ -134,8 +109,13 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    kill_orphans()
     runtime.audio_backend = await create_audio_backend()
     await runtime.audio_backend.start()
+    runtime.player = MusicPlayer()
+    runtime.player.configure(runtime.audio_backend)
+    runtime.jingles = JinglePlayer()
+    runtime.jingles.configure(runtime.audio_backend)
     await stream_manager.start(runtime.audio_backend)
 
     tasks = [
@@ -145,8 +125,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for t in tasks:
-        t.cancel()
+    for task in tasks:
+        task.cancel()
+    await runtime.player.stop()
+    await runtime.jingles.stop()
     await stream_manager.stop()
     if runtime.audio_backend is not None:
         await runtime.audio_backend.stop()
@@ -156,13 +138,12 @@ app = FastAPI(title="BuschFunk", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, same_site="lax")
 
 app.include_router(auth_router.router)
-app.include_router(days_router.router)
+app.include_router(library_router.router)
+app.include_router(playlists_router.router)
+app.include_router(player_router.router)
 app.include_router(live_router.router)
 app.include_router(live_router.public_router)
 app.include_router(buses_router.router)
-app.include_router(schedule_router.router)
-app.include_router(schedule_router.public_router)
-app.include_router(export_import_router.router)
 app.include_router(system_router.router)
 app.include_router(system_router.public_router)
 app.include_router(stream_proxy_router.router)
@@ -174,7 +155,7 @@ async def ws_live(websocket: WebSocket):
     db = SessionLocal()
     try:
         # Sofort den vollen Zustand schicken, statt den Client bis zum
-        # nächsten Broadcast-Tick auf eine leere UI schauen zu lassen.
+        # naechsten Broadcast-Tick auf eine leere UI schauen zu lassen.
         await websocket.send_json(await build_live_payload(db))
     except Exception:
         pass
@@ -183,7 +164,7 @@ async def ws_live(websocket: WebSocket):
     try:
         while True:
             # Einziges, was ein Client schickt: ob er die Pegel-Pakete will
-            # (die Regie-UI ja, die Hörer-Seite nicht).
+            # (die Regie ja, die Hoerer-Seite nicht).
             raw = await websocket.receive_text()
             try:
                 await manager.set_wants_meters(websocket, bool(json.loads(raw).get("meters")))

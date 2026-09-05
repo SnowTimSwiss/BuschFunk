@@ -59,14 +59,6 @@
   .tap-hint { margin-top: 14px; border: 1px solid var(--onair); background: var(--onair-dim); color: var(--text);
     border-radius: var(--radius); padding: 13px; font-size: 13.5px; text-align: center; width: 100%; font-weight: 600; }
 
-  .schedule { margin-top: 24px; }
-  .section-label { font-family: var(--mono); font-size: 10px; color: var(--text-faint); letter-spacing: 0.08em; margin-bottom: 10px; }
-  .sched-row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
-  .sched-row:last-child { border-bottom: none; }
-  .sched-row .day { color: var(--text-muted); font-family: var(--mono); font-size: 11.5px; width: 82px; flex-shrink: 0; }
-  .sched-row .title { flex: 1; min-width: 0; }
-  .sched-row .time { font-family: var(--mono); color: var(--text-faint); font-size: 11.5px; white-space: nowrap; }
-  .empty { color: var(--text-faint); font-size: 12.5px; }
 
   .admin-link { display: block; text-align: center; margin-top: 20px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); text-decoration: none; padding: 6px; }
   .admin-link:hover { color: var(--text-muted); }
@@ -74,12 +66,12 @@
 </head>
 <body>
   <div class="card">
-    <div class="brand">BuschFunk<small>Lagerradio · Regiolager 27</small></div>
+    <div class="brand">BuschFunk<small>Lagerradio</small></div>
 
     <div class="now">
       <div class="lbl">LÄUFT GERADE</div>
       <div class="title" id="nowTitle">–</div>
-      <div class="onair" id="onairFlag" hidden><i></i>LIVE AUS DEM LAGER</div>
+      <div class="onair" id="onairFlag" hidden><i></i>MIKROFONE SIND OFFEN</div>
     </div>
 
     <div class="playbar">
@@ -91,11 +83,6 @@
     </div>
 
     <button class="tap-hint" id="tapHint" hidden>▶ Antippen, um den Stream zu starten</button>
-
-    <div class="schedule">
-      <div class="section-label">Sendezeiten</div>
-      <div id="scheduleList"><div class="empty">Lade…</div></div>
-    </div>
 
     <a class="admin-link" href="/admin/">Admin →</a>
   </div>
@@ -196,7 +183,7 @@
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTitle || 'BuschFunk',
-      artist: 'Lagerradio Regiolager 27',
+      artist: 'Lagerradio',
       album: 'BuschFunk',
     });
     navigator.mediaSession.playbackState = wantPlay ? 'playing' : 'paused';
@@ -233,10 +220,11 @@
       let state;
       try { state = JSON.parse(ev.data); } catch (e) { return; }
       if (state.type !== 'live_state') return;
-      const live = state.is_on_air && state.current_segment_title;
-      currentTitle = live ? state.current_segment_title : null;
-      $('nowTitle').textContent = live ? state.current_segment_title : 'Playlist – gerade keine Live-Sendung';
-      $('onairFlag').hidden = !live;
+      const player = state.player || {};
+      const music = player.playing ? player.title : null;
+      currentTitle = music;
+      $('nowTitle').textContent = music || (state.on_air ? 'Live aus dem Lager' : 'BuschFunk');
+      $('onairFlag').hidden = !state.on_air;
       if (wantPlay) updateMediaSession();
     };
     ws.onclose = () => setTimeout(connectWS, 3000);
@@ -244,21 +232,6 @@
   }
   connectWS();
 
-  // ---------- Öffentliche Sendezeiten ----------
-  fetch('/api/schedule').then((r) => r.json()).then((entries) => {
-    const el = $('scheduleList');
-    if (!entries.length) { el.innerHTML = '<div class="empty">Noch keine Sendezeiten veröffentlicht.</div>'; return; }
-    el.innerHTML = '';
-    entries.forEach((e) => {
-      const row = document.createElement('div');
-      row.className = 'sched-row';
-      row.innerHTML = '<span class="day"></span><span class="title"></span><span class="time"></span>';
-      row.querySelector('.day').textContent = e.day;
-      row.querySelector('.title').textContent = e.title;
-      row.querySelector('.time').textContent = e.from_time + '–' + e.to_time;
-      el.appendChild(row);
-    });
-  }).catch(() => { $('scheduleList').innerHTML = '<div class="empty">Sendezeiten konnten nicht geladen werden.</div>'; });
 })();
 </script>
 </body>

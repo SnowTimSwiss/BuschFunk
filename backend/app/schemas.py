@@ -1,94 +1,95 @@
 from pydantic import BaseModel, ConfigDict
 
 
-# ---------- Segment ----------
+# ---------- Mediathek ----------
 
-class SegmentBase(BaseModel):
-    type: str = "song"
-    title: str = "Neues Segment"
-    time: str | None = None
-    planned_duration: int = 0
-    fixed: bool = False
-    notes: str | None = None
-    media_file: str | None = None
-    media_original_name: str | None = None
-    media_role: str = "full"        # intro | outro | full | bed
-    media_trigger: str = "manual"   # start | end | manual
-    auto_route: list[int] = []
+class TrackOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    filename: str
+    original_name: str
+    title: str
+    kind: str          # music | jingle
+    duration: float
 
 
-class SegmentCreate(SegmentBase):
-    parent_id: int | None = None
-
-
-class SegmentUpdate(BaseModel):
-    type: str | None = None
+class TrackUpdate(BaseModel):
     title: str | None = None
-    time: str | None = None
-    planned_duration: int | None = None
-    fixed: bool | None = None
-    notes: str | None = None
-    media_file: str | None = None
-    media_original_name: str | None = None
-    media_role: str | None = None
-    media_trigger: str | None = None
-    auto_route: list[int] | None = None
+    kind: str | None = None
 
 
-class SegmentOut(SegmentBase):
+# ---------- Playlists ----------
+
+class PlaylistItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    show_id: int
-    parent_id: int | None = None
-    position: int
-    children: list["SegmentOut"] = []
+    track: TrackOut
 
 
-class SegmentReorder(BaseModel):
-    ordered_ids: list[int]
-    parent_id: int | None = None
-
-
-# ---------- Show ----------
-
-class ShowCreate(BaseModel):
-    label: str = "Neuer Tag"
-
-
-class ShowUpdate(BaseModel):
-    label: str | None = None
-
-
-class ShowOut(BaseModel):
+class PlaylistOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    label: str
-    position: int
-    segments: list[SegmentOut] = []
+    name: str
+    items: list[PlaylistItemOut]
 
 
-class ShowSummary(BaseModel):
-    id: int
-    label: str
-    segment_count: int
+class PlaylistCreate(BaseModel):
+    name: str = "Neue Playlist"
 
 
-# ---------- Bus ----------
+class PlaylistUpdate(BaseModel):
+    name: str | None = None
+
+
+class PlaylistAddTracks(BaseModel):
+    track_ids: list[int]
+
+
+class PlaylistReorder(BaseModel):
+    ordered_item_ids: list[int]
+
+
+# ---------- Player ----------
+
+class PlayRequest(BaseModel):
+    track_id: int | None = None
+    playlist_id: int | None = None
+    shuffle: bool = False
+
+
+class QueueRequest(BaseModel):
+    track_ids: list[int] = []
+    playlist_id: int | None = None
+
+
+class QueueJump(BaseModel):
+    index: int
+
+
+class VolumeRequest(BaseModel):
+    volume: float
+
+
+class RepeatRequest(BaseModel):
+    repeat: bool
+
+
+class JingleRequest(BaseModel):
+    track_id: int
+
+
+# ---------- Mixer ----------
 
 class BusOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     device_id: str
     display_name: str
-    direction: str = "in"
+    direction: str
     is_muted: bool
-    volume: float = 1.0
+    volume: float
     level: float = 0.0
-    connected: bool = True
-
-
-class BusRename(BaseModel):
-    display_name: str
+    connected: bool = False
 
 
 class BusUpdate(BaseModel):
@@ -96,32 +97,8 @@ class BusUpdate(BaseModel):
     volume: float | None = None
 
 
-# ---------- ScheduleEntry ----------
-
-class ScheduleEntryBase(BaseModel):
-    day: str
-    from_time: str
-    to_time: str
-    title: str
-    public: bool = True
-
-
-class ScheduleEntryCreate(ScheduleEntryBase):
-    pass
-
-
-class ScheduleEntryUpdate(BaseModel):
-    day: str | None = None
-    from_time: str | None = None
-    to_time: str | None = None
-    title: str | None = None
-    public: bool | None = None
-
-
-class ScheduleEntryOut(ScheduleEntryBase):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    position: int
+class BusRename(BaseModel):
+    display_name: str
 
 
 # ---------- Auth ----------
@@ -139,27 +116,10 @@ class Login(BaseModel):
     password: str
 
 
-# ---------- Live control ----------
+# ---------- Sendung ----------
 
-class LiveStatus(BaseModel):
-    active_show_id: int | None
-    current_segment_id: int | None
-    elapsed_seconds: int
-    is_on_air: bool
-    master_level: float = 0.0
-    buses: list[BusOut]
-
-
-class GoToSegment(BaseModel):
-    segment_id: int
-
-
-class NotesUpdate(BaseModel):
-    notes: str
-
-
-class PlayMedia(BaseModel):
-    segment_id: int | None = None
+class OnAirRequest(BaseModel):
+    on_air: bool
 
 
 # ---------- System / update ----------

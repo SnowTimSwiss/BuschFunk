@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, JSON, UniqueConstraint
+from sqlalchemy import ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -10,57 +10,49 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Show(Base):
-    __tablename__ = "shows"
+class Track(Base):
+    """Eine hochgeladene Audiodatei: Musikstueck, Jingle oder Aufnahme."""
+
+    __tablename__ = "tracks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    label: Mapped[str] = mapped_column(default="Neuer Tag")
-    position: Mapped[int] = mapped_column(default=0)
+    filename: Mapped[str] = mapped_column(unique=True)  # Datei in media/
+    original_name: Mapped[str] = mapped_column(default="")
+    title: Mapped[str] = mapped_column(default="")
+    kind: Mapped[str] = mapped_column(default="music")  # music | jingle
+    duration: Mapped[float] = mapped_column(default=0.0)  # Sekunden, 0 = unbekannt
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    segments: Mapped[list["Segment"]] = relationship(
-        back_populates="show",
-        cascade="all, delete-orphan",
-        order_by="Segment.position",
-        primaryjoin="and_(Show.id==Segment.show_id, Segment.parent_id.is_(None))",
-        viewonly=False,
+    items: Mapped[list["PlaylistItem"]] = relationship(
+        back_populates="track", cascade="all, delete-orphan"
     )
 
 
-class Segment(Base):
-    __tablename__ = "segments"
+class Playlist(Base):
+    __tablename__ = "playlists"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    show_id: Mapped[int] = mapped_column(ForeignKey("shows.id", ondelete="CASCADE"))
-    parent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("segments.id", ondelete="CASCADE"), nullable=True
+    name: Mapped[str] = mapped_column(default="Neue Playlist")
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    items: Mapped[list["PlaylistItem"]] = relationship(
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="PlaylistItem.position",
     )
+
+
+class PlaylistItem(Base):
+    __tablename__ = "playlist_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"))
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"))
     position: Mapped[int] = mapped_column(default=0)
 
-    type: Mapped[str] = mapped_column(default="song")
-    title: Mapped[str] = mapped_column(default="Neues Segment")
-    time: Mapped[str | None] = mapped_column(nullable=True)  # "HH:MM", orientierend
-    planned_duration: Mapped[int] = mapped_column(default=0)  # Sekunden
-    fixed: Mapped[bool] = mapped_column(default=False)
-    notes: Mapped[str | None] = mapped_column(nullable=True)
-    media_file: Mapped[str | None] = mapped_column(nullable=True)
-    media_original_name: Mapped[str | None] = mapped_column(nullable=True)  # lesbarer Dateiname für die UI
-    # Rolle der Datei im Segment: intro | outro | full (Hauptinhalt/Aufnahme) | bed (Hintergrund)
-    media_role: Mapped[str] = mapped_column(default="full")
-    # Wann sie abgespielt wird: start (beim Aktivieren) | end (wenn die geplante
-    # Zeit abgelaufen ist) | manual (nur auf Knopfdruck in der Live-Spalte)
-    media_trigger: Mapped[str] = mapped_column(default="manual")
-    auto_route: Mapped[list[int]] = mapped_column(JSON, default=list)
-
-    show: Mapped["Show"] = relationship(back_populates="segments", foreign_keys=[show_id])
-    children: Mapped[list["Segment"]] = relationship(
-        back_populates="parent",
-        cascade="all, delete-orphan",
-        order_by="Segment.position",
-        foreign_keys=[parent_id],
-    )
-    parent: Mapped["Segment | None"] = relationship(
-        back_populates="children", remote_side=[id], foreign_keys=[parent_id]
-    )
+    playlist: Mapped["Playlist"] = relationship(back_populates="items")
+    track: Mapped["Track"] = relationship(back_populates="items")
 
 
 class Bus(Base):
@@ -68,23 +60,11 @@ class Bus(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[str] = mapped_column(unique=True)
-    display_name: Mapped[str] = mapped_column(default="Neuer Bus")
-    direction: Mapped[str] = mapped_column(default="in")  # in (Eingang) | out (Ausgang, z.B. Monitor)
+    display_name: Mapped[str] = mapped_column(default="Neues Geraet")
+    direction: Mapped[str] = mapped_column(default="in")  # in (Eingang) | out (Ausgang)
     is_muted: Mapped[bool] = mapped_column(default=True)
     volume: Mapped[float] = mapped_column(default=1.0)  # 0.0 .. 1.5
     last_seen_active: Mapped[datetime | None] = mapped_column(nullable=True)
-
-
-class ScheduleEntry(Base):
-    __tablename__ = "schedule_entries"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    day: Mapped[str] = mapped_column(default="")
-    from_time: Mapped[str] = mapped_column(default="")
-    to_time: Mapped[str] = mapped_column(default="")
-    title: Mapped[str] = mapped_column(default="")
-    public: Mapped[bool] = mapped_column(default=True)
-    position: Mapped[int] = mapped_column(default=0)
 
 
 class AdminUser(Base):
@@ -108,17 +88,10 @@ class SetupCode(Base):
 
 
 class LiveState(Base):
-    """Singleton-Zeile (id=1), hält den Live-Zustand über Neustarts/Self-Updates hinweg."""
+    """Singleton-Zeile (id=1). Haelt nur noch, ob die Mikrofone offen sind -
+    das ueberlebt Neustarts und Self-Updates."""
 
     __tablename__ = "live_state"
 
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    active_show_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shows.id", ondelete="SET NULL"), nullable=True
-    )
-    current_segment_id: Mapped[int | None] = mapped_column(
-        ForeignKey("segments.id", ondelete="SET NULL"), nullable=True
-    )
-    segment_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    elapsed_offset_seconds: Mapped[int] = mapped_column(default=0)
-    is_on_air: Mapped[bool] = mapped_column(default=False)
+    on_air: Mapped[bool] = mapped_column(default=False)

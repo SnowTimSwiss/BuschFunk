@@ -34,12 +34,12 @@
   .brand small { display: block; font-family: var(--mono); font-weight: 400; font-size: 11px; color: var(--text-faint); margin-top: 4px; }
 
   .now { margin-top: 20px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-raised); }
-  .now .lbl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); letter-spacing: 0.08em; }
-  .now .title { font-size: 15px; font-weight: 600; margin-top: 5px; word-break: break-word; }
-  .now .onair { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--onair); }
-  .now .onair i { width: 7px; height: 7px; border-radius: 50%; background: var(--onair); box-shadow: 0 0 8px var(--onair); animation: pulse 1.2s ease-in-out infinite; }
+  .onair-status { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 14px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-muted); }
+  .onair-status i { width: 10px; height: 10px; border-radius: 50%; background: var(--text-faint); flex-shrink: 0; }
+  .onair-status.live { color: var(--onair); }
+  .onair-status.live i { background: var(--onair); box-shadow: 0 0 8px var(--onair); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
-  @media (prefers-reduced-motion: reduce) { .now .onair i { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .onair-status.live i { animation: none; } }
 
   .playbar { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
   .play-btn {
@@ -69,9 +69,7 @@
     <div class="brand">BuschFunk<small>Lagerradio</small></div>
 
     <div class="now">
-      <div class="lbl">LÄUFT GERADE</div>
-      <div class="title" id="nowTitle">–</div>
-      <div class="onair" id="onairFlag" hidden><i></i>MIKROFONE SIND OFFEN</div>
+      <div class="onair-status" id="onairStatus"><i></i><span id="onairText">Nicht live</span></div>
     </div>
 
     <div class="playbar">
@@ -102,7 +100,6 @@
   let wantPlay = false;        // Absicht der hörenden Person - überlebt Netzaussetzer
   let retryDelay = 1000;
   let retryTimer = null;
-  let currentTitle = null;
 
   const playBtn = $('playBtn'), playStatus = $('playStatus'), tapHint = $('tapHint');
 
@@ -182,7 +179,7 @@
   function updateMediaSession() {
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: currentTitle || 'BuschFunk',
+      title: 'BuschFunk',
       artist: 'Lagerradio',
       album: 'BuschFunk',
     });
@@ -211,7 +208,7 @@
       start(false);
     });
 
-  // ---------- Aktueller Titel (öffentlich, kein Login nötig) ----------
+  // ---------- On-Air-Status (öffentlich, kein Login nötig) ----------
   function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     let ws;
@@ -220,11 +217,9 @@
       let state;
       try { state = JSON.parse(ev.data); } catch (e) { return; }
       if (state.type !== 'live_state') return;
-      const player = state.player || {};
-      const music = (player.playing && !player.paused) ? player.title : null;
-      currentTitle = music;
-      $('nowTitle').textContent = music || (state.on_air ? 'Live aus dem Lager' : 'BuschFunk');
-      $('onairFlag').hidden = !state.on_air;
+      const onAir = !!state.on_air;
+      $('onairStatus').className = 'onair-status' + (onAir ? ' live' : '');
+      $('onairText').textContent = onAir ? 'ON AIR' : 'Nicht live';
       if (wantPlay) updateMediaSession();
     };
     ws.onclose = () => setTimeout(connectWS, 3000);
